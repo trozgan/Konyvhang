@@ -8,3 +8,6 @@ voices/
 !samples/*.epub
 bench/
 bench_run.log
+.claude/settings.local.json
+.coverage
+coverage.xml

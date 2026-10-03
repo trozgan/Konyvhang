@@ -19,7 +19,7 @@ def fake_translation(prompt: str) -> str:
 
 
 def fake_labels(prompt: str) -> str:
-    labels = json.loads(prompt.split("<labels>")[1].split("</labels>")[0])
+    labels = json.loads(prompt.split("<labels>")[1].split("</labels>", maxsplit=1)[0])
     return json.dumps([f"HU {x}" for x in labels])
 
 
@@ -114,12 +114,16 @@ def test_build_refuses_unfinished_without_partial(wd):
 
 def test_reference_matter_is_not_chunked_unless_asked(tmp_path):
     from conftest import CH1, make_epub
+
     from konyvhang.workdir import build_chunks
 
-    bib = ('<section epub:type="bibliography" xmlns:epub="http://www.idpf.org/2007/ops"><h2>References</h2>'
-           '<p>Smith, J. (2020). A Book. Publisher.</p></section></body>')
+    bib = (
+        '<section epub:type="bibliography" xmlns:epub="http://www.idpf.org/2007/ops"><h2>References</h2>'
+        "<p>Smith, J. (2020). A Book. Publisher.</p></section></body>"
+    )
     path = make_epub(tmp_path / "b.epub")
     import zipfile
+
     with zipfile.ZipFile(path) as zf:
         files = {n: zf.read(n) for n in zf.namelist()}
     files["OEBPS/text/ch1.xhtml"] = CH1.replace("</body>", bib).encode()

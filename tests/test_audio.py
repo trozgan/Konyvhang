@@ -1,4 +1,12 @@
+import json
+import subprocess
+import zipfile
+
+import numpy as np
+import pytest
+
 from konyvhang import audio
+from konyvhang.workdir import WorkDir
 
 
 def test_speech_text_drops_footnote_markers_and_keeps_line_breaks():
@@ -57,14 +65,7 @@ def test_add_pieces_uses_spoken_form_before_splitting():
 
 
 # chapters, footnotes, metadata ---------------------------------------------
-import json
-import subprocess
-import zipfile
 
-import numpy as np
-import pytest
-
-from konyvhang.workdir import WorkDir
 
 X = 'xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"'
 FILES = {
@@ -94,13 +95,18 @@ def book_wd(tmp_path):
     src = tmp_path / "b.epub"
     with zipfile.ZipFile(src, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip")
-        zf.writestr("META-INF/container.xml", '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
-                    '<rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>')
+        zf.writestr(
+            "META-INF/container.xml",
+            '<container xmlns="urn:oasis:names:tc:opendocument:xmlns:container">'
+            '<rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>',
+        )
         for name, data in FILES.items():
             zf.writestr(name, data)
         cover = tmp_path / "cover.jpg"
-        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16",
-                        "-frames:v", "1", str(cover)], check=True)
+        subprocess.run(
+            ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=16x16", "-frames:v", "1", str(cover)],
+            check=True,
+        )
         zf.write(cover, "OEBPS/cover.jpg")
     wd = WorkDir(tmp_path / "work" / "b")
     wd.root.mkdir(parents=True)
@@ -110,7 +116,7 @@ def book_wd(tmp_path):
     for chunk in wd.load_chunks():  # "translate" by echoing the source
         chunk["translation"] = [s["src"] for s in chunk["segments"]]
         wd.save_chunk(chunk)
-    wd.labels_path.write_text(json.dumps({"The Book": "A könyv", "Chapter One": "Első fejezet"}))
+    wd.labels_path.write_text(json.dumps({"The Book": "A könyv", "Chapter One": "Első fejezet"}), encoding="utf-8")
     return wd
 
 
@@ -118,7 +124,10 @@ def test_chapters_skip_landmarks_and_read_footnotes_inline(book_wd):
     book = audio.chapters(book_wd, [])
     assert [c["file"] for c in book] == ["OEBPS/ch1.xhtml"]
     assert [s["text"] for s in book[0]["segments"]] == [
-        "Chapter One", "First paragraph.", "Lábjegyzet: The note text.", "Second paragraph.",
+        "Chapter One",
+        "First paragraph.",
+        "Lábjegyzet: The note text.",
+        "Second paragraph.",
     ]
     assert book[0]["segments"][0]["heading"]
 
@@ -142,9 +151,14 @@ def test_m4b_has_metadata_chapters_and_cover(book_wd):
 
     out = book_wd.root / "out.m4b"
     audio.build_m4b(book_wd, book, chapters_dir, out)
-    probe = json.loads(subprocess.run(
-        ["ffprobe", "-v", "error", "-show_chapters", "-show_format", "-show_streams", "-of", "json", str(out)],
-        capture_output=True, text=True, check=True).stdout)
+    probe = json.loads(
+        subprocess.run(
+            ["ffprobe", "-v", "error", "-show_chapters", "-show_format", "-show_streams", "-of", "json", str(out)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+    )
     streams = {s["codec_type"]: s for s in probe["streams"]}  # plus a "data" track for the chapters
     assert streams["audio"]["codec_name"] == "aac"
     assert streams["video"]["disposition"]["attached_pic"] == 1

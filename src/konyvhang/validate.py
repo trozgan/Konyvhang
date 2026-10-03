@@ -49,9 +49,7 @@ def check(source: dict[str, str], translated: dict[str, etree._Element]) -> None
         expected = inline_signature(etree.fromstring(f"<seg>{markup}</seg>"))
         got = inline_signature(translated[sid])
         if got != expected:
-            problems.append(
-                f"A {sid} szegmens címkéi eltérnek. Várt: {expected}, kapott: {got}."
-            )
+            problems.append(f"A {sid} szegmens címkéi eltérnek. Várt: {expected}, kapott: {got}.")
     if problems:
         raise ValidationError("\n".join(problems))
 

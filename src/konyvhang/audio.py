@@ -1,9 +1,9 @@
 """Audiobook from the translated chunks with Higgs TTS 3 (MLX), checked by Whisper.
 
-Each spine file is a chapter; footnotes are read after the paragraph that cites them. Long paragraphs are split at sentence ends. Every
-piece is saved as soon as it passes the check, so an interrupted run resumes.
-Finished chapters become .m4a files at once; the full book becomes one .m4b
-with chapter marks.
+Each spine file is a chapter; footnotes are read after the paragraph that cites them.
+Long paragraphs are split at sentence ends. Every piece is saved as soon as it passes
+the check, so an interrupted run resumes. Finished chapters become .m4a files at once;
+the full book becomes one .m4b with chapter marks.
 """
 
 import difflib
@@ -14,6 +14,7 @@ import subprocess
 import time
 import wave
 import zipfile
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -94,14 +95,24 @@ def resolve(base: str, href: str) -> tuple[str, str]:
     return (posixpath.normpath(posixpath.join(base, path)) if path else "", frag)
 
 
+NoteKey = tuple[str, str]  # (file, element id) of a footnote
+
+
+@dataclass
+class SegmentInfo:
+    heading: bool
+    note: NoteKey | None  # the footnote this segment belongs to
+    refs: list[NoteKey]  # footnotes this segment cites
+
+
 def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
     """Translated text grouped by spine file: [{"file", "title", "segments": [{"text", "heading"}]}].
 
     Pages the publisher marks as cover, title page, TOC or copyright are left out.
     Footnotes are read right after the paragraph that refers to them, not as chapters.
     """
-    info = {}  # (file, idx) -> {"heading", "note": note key or None, "refs": [note keys]}
-    note_of_file = {}  # footnote file -> note key, for references without a fragment
+    info: dict[tuple[str, int], SegmentInfo] = {}
+    note_of_file: dict[str, NoteKey] = {}  # footnote file -> its note, for references without a fragment
     with zipfile.ZipFile(wd.source) as zf:
         book = epub.read_book(zf)
         skipped = landmark_files(zf, book)
@@ -126,34 +137,36 @@ def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
                     if "noteref" in segment.semantics(a) and a.get("href"):
                         file, frag = resolve(base, a.get("href"))
                         refs.append((file or path, frag))
-                info[(path, idx)] = {"heading": segment.local(el) in HEADING_TAGS, "note": note, "refs": refs}
+                info[(path, idx)] = SegmentInfo(segment.local(el) in HEADING_TAGS, note, refs)
 
     texts = {}
     for chunk in wd.load_chunks():
         if chunk["translation"] is None:
             break  # stop at the first gap so chapters stay in reading order
-        for seg, markup in zip(chunk["segments"], chunk["translation"]):
+        for seg, markup in zip(chunk["segments"], chunk["translation"], strict=True):
             texts[(seg["file"], seg["idx"])] = speech_text(markup)
 
-    notes: dict[tuple, list[str]] = {}
+    notes: dict[NoteKey, list[str]] = {}
     for key, text in texts.items():
-        if info[key]["note"]:
-            notes.setdefault(info[key]["note"], []).append(text)
+        note = info[key].note
+        if note:
+            notes.setdefault(note, []).append(text)
 
     out: list[dict] = []
     for (file, idx), text in texts.items():
         meta = info[(file, idx)]
-        if meta["note"] or file in skipped or any(s in file for s in skip):
+        if meta.note or file in skipped or any(s in file for s in skip):
             continue
         if not segment.LETTER.search(text):
             continue
         if not out or out[-1]["file"] != file:
             out.append({"file": file, "title": text[:80], "segments": []})
-        out[-1]["segments"].append({"text": text, "heading": meta["heading"]})
-        for ref in meta["refs"]:
-            note = notes.get(ref) or notes.get(note_of_file.get(ref[0]))
-            if note:
-                note_text = " ".join(t for t in note if segment.LETTER.search(t))
+        out[-1]["segments"].append({"text": text, "heading": meta.heading})
+        for ref in meta.refs:
+            fallback = note_of_file.get(ref[0])
+            note_texts = notes.get(ref) or (notes.get(fallback) if fallback else None)
+            if note_texts:
+                note_text = " ".join(t for t in note_texts if segment.LETTER.search(t))
                 out[-1]["segments"].append({"text": f"Lábjegyzet: {note_text}", "heading": False})
     return out
 
@@ -180,9 +193,9 @@ def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
     from . import llm
 
     path = wd.root / "speech.json"
-    cache = json.loads(path.read_text()) if path.exists() else {}
+    cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     todo = list(dict.fromkeys(t for t in texts if DIGIT.search(t) and t not in cache))
-    system = (Path(__file__).parent / "prompts" / "speech.md").read_text()
+    system = (Path(__file__).parent / "prompts" / "speech.md").read_text(encoding="utf-8")
     state = wd.load_state()
     provider = state.get("provider", "claude")
     call = llm.caller(provider)
@@ -200,7 +213,7 @@ def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
         if len(spoken) != len(batch):
             log("  az elemszám eltér, ezek a bekezdések számjegyekkel maradnak")
             continue
-        cache.update(zip(batch, spoken))
+        cache.update(zip(batch, spoken, strict=True))
         write_json(path, cache)
     return cache
 
@@ -242,8 +255,9 @@ def silence(seconds: float) -> np.ndarray:
 
 def to_aac(src: Path, dest: Path) -> None:
     tmp = dest.with_name(dest.stem + ".tmp" + dest.suffix)  # readers never see a half-written file
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-c:a", "aac", "-b:a", "64k", str(tmp)],
-                   check=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-c:a", "aac", "-b:a", "64k", str(tmp)], check=True
+    )
     tmp.replace(dest)
 
 
@@ -255,21 +269,33 @@ class Narrator:
 
         self.tts = load_tts(TTS_MODEL)
         self.stt = load_stt(STT_MODEL)
-        self.ref_text = (voice / "voice.txt").read_text().strip()
+        self.ref_text = (voice / "voice.txt").read_text(encoding="utf-8").strip()
         self.ref_codes = self.tts.encode_reference_audio(str(voice / "voice.wav"))
 
     def speak(self, text: str, seed: int) -> np.ndarray:
-        result = next(self.tts.generate(
-            text=text, ref_audio_codes=self.ref_codes, ref_text=self.ref_text,
-            temperature=TEMPERATURE, top_k=TOP_K, seed=seed, max_new_tokens=frame_limit([text]),
-        ))
+        result = next(
+            self.tts.generate(
+                text=text,
+                ref_audio_codes=self.ref_codes,
+                ref_text=self.ref_text,
+                temperature=TEMPERATURE,
+                top_k=TOP_K,
+                seed=seed,
+                max_new_tokens=frame_limit([text]),
+            )
+        )
         return np.array(result.audio, dtype=np.float32)
 
     def speak_batch(self, texts: list[str], seed: int) -> list[np.ndarray]:
         """One pass on the GPU for several texts; about 4x faster than one by one at BATCH_SIZE 8."""
         results = self.tts.batch_generate(
-            texts=texts, ref_audio_codes=self.ref_codes, ref_text=self.ref_text,
-            temperature=TEMPERATURE, top_k=TOP_K, seed=seed, max_new_tokens=frame_limit(texts),
+            texts=texts,
+            ref_audio_codes=self.ref_codes,
+            ref_text=self.ref_text,
+            temperature=TEMPERATURE,
+            top_k=TOP_K,
+            seed=seed,
+            max_new_tokens=frame_limit(texts),
         )
         return [np.array(r.audio, dtype=np.float32) for r in sorted(results, key=lambda r: r.sequence_idx)]
 
@@ -303,7 +329,7 @@ def piece_seed(text: str, attempt: int) -> int:
 
 def generate_piece(narrator: "Narrator", text: str, check: Path) -> tuple[float, np.ndarray, str]:
     """Best of up to ATTEMPTS takes alone (seeds 1.., the batch used 0), judged by Whisper."""
-    best = None
+    best: tuple[float, np.ndarray, str] | None = None
     for attempt in range(1, ATTEMPTS + 1):
         audio = to_pcm(narrator.speak(text, piece_seed(text, attempt)))
         write_wav(check, audio)
@@ -313,6 +339,7 @@ def generate_piece(narrator: "Narrator", text: str, check: Path) -> tuple[float,
             best = (score, audio, heard)
         if score >= MIN_SIMILARITY:
             break
+    assert best is not None  # ATTEMPTS >= 1
     return best
 
 
@@ -323,16 +350,18 @@ def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=
     pieces_dir.mkdir(parents=True, exist_ok=True)
     chapters_dir.mkdir(exist_ok=True)
     report_path = audio_dir / "report.json"
-    report = json.loads(report_path.read_text()) if report_path.exists() else {}
+    report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
 
     book = chapters(wd, skip)
     if not book:
         log("Még nincs felolvasható lefordított rész.")
         return None
     add_pieces(book, spell_numbers(wd, [s["text"] for c in book for s in c["segments"]], log))
-    missing = list(dict.fromkeys(
-        p["text"] for c in book for p in c["pieces"] if not (pieces_dir / f"{piece_key(p['text'])}.wav").exists()
-    ))
+    missing = list(
+        dict.fromkeys(
+            p["text"] for c in book for p in c["pieces"] if not (pieces_dir / f"{piece_key(p['text'])}.wav").exists()
+        )
+    )
     total = sum(len(c["pieces"]) for c in book)
     log(f"{len(book)} fejezet, {total} hangdarab, ebből {len(missing)} hiányzik, hang: {voice}")
     started = time.perf_counter()
@@ -347,7 +376,7 @@ def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=
             narrator = get_narrator(voice, log)
             takes = narrator.speak_batch(batch, piece_seed(batch[0], 0))
             scores = []
-            for text, take in zip(batch, takes):
+            for text, take in zip(batch, takes, strict=True):
                 pcm = to_pcm(take)
                 write_wav(check, pcm)
                 heard = narrator.hear(check)
@@ -364,12 +393,14 @@ def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=
             done = min(w + b + len(batch), len(missing))
             elapsed = time.perf_counter() - started
             eta = elapsed / done * (len(missing) - done) / 60
-            log(f"{done}/{len(missing)} hangdarab  (legrosszabb egyezés {min(scores):.2f}, "
-                f"eltelt {elapsed / 60:.0f} perc, hátra kb. {eta:.0f} perc)")
+            log(
+                f"{done}/{len(missing)} hangdarab  (legrosszabb egyezés {min(scores):.2f}, "
+                f"eltelt {elapsed / 60:.0f} perc, hátra kb. {eta:.0f} perc)"
+            )
         for chapter in book:
-            if all((pieces_dir / f"{piece_key(p['text'])}.wav").exists() for p in chapter["pieces"]):
-                if build_chapter(chapter, pieces_dir, chapters_dir):
-                    log(f"Fejezet kész: {chapter_path(chapters_dir, chapter, '.m4a')}  ({chapter['title'][:50]})")
+            complete = all((pieces_dir / f"{piece_key(p['text'])}.wav").exists() for p in chapter["pieces"])
+            if complete and build_chapter(chapter, pieces_dir, chapters_dir):
+                log(f"Fejezet kész: {chapter_path(chapters_dir, chapter, '.m4a')}  ({chapter['title'][:50]})")
 
     for chapter in book:
         if build_chapter(chapter, pieces_dir, chapters_dir):
@@ -392,24 +423,26 @@ def build_chapter(chapter: dict, pieces_dir: Path, chapters_dir: Path) -> bool:
     keys = [piece_key(p["text"]) for p in chapter["pieces"]]
     manifest = chapter_path(chapters_dir, chapter, ".json")
     m4a = chapter_path(chapters_dir, chapter, ".m4a")
-    if m4a.exists() and manifest.exists() and json.loads(manifest.read_text()) == {"keys": keys}:
+    if m4a.exists() and manifest.exists() and json.loads(manifest.read_text(encoding="utf-8")) == {"keys": keys}:
         return False
     parts = []
-    for key, piece in zip(keys, chapter["pieces"]):
+    for key, piece in zip(keys, chapter["pieces"], strict=True):
         parts += [read_wav(pieces_dir / f"{key}.wav"), silence(piece["pause"])]
     parts.append(silence(PAUSE["chapter"]))
     wav = chapter_path(chapters_dir, chapter, ".tmp.wav")
     write_wav(wav, np.concatenate(parts))
     to_aac(wav, m4a)
     wav.unlink()
-    manifest.write_text(json.dumps({"keys": keys}))
+    manifest.write_text(json.dumps({"keys": keys}), encoding="utf-8")
     return True
 
 
 def duration_ms(path: Path) -> int:
     out = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
     return round(float(out) * 1000)
 
@@ -417,7 +450,7 @@ def duration_ms(path: Path) -> int:
 # metadata ------------------------------------------------------------------
 def book_metadata(wd: WorkDir) -> dict:
     """Hungarian title, authors, cover image and TOC chapter titles, from the source EPUB and labels.json."""
-    labels = json.loads(wd.labels_path.read_text()) if wd.labels_path.exists() else {}
+    labels = json.loads(wd.labels_path.read_text(encoding="utf-8")) if wd.labels_path.exists() else {}
 
     def hu(text: str) -> str:
         text = " ".join(text.split())
@@ -441,11 +474,13 @@ def book_metadata(wd: WorkDir) -> dict:
                 cover = (resolve(base, item.get("href"))[0], zf.read(resolve(base, item.get("href"))[0]))
                 break
 
-        toc = {}
+        toc: dict[str, str] = {}
         if book.nav_path:
             nav = epub.parse_xml(zf.read(book.nav_path))
             nav_base = book.nav_path.rsplit("/", 1)[0] if "/" in book.nav_path else ""
-            toc_nav = next((n for n in nav.iter("{http://www.w3.org/1999/xhtml}nav") if "toc" in segment.semantics(n)), None)
+            toc_nav = next(
+                (n for n in nav.iter("{http://www.w3.org/1999/xhtml}nav") if "toc" in segment.semantics(n)), None
+            )
             for a in toc_nav.iter("{http://www.w3.org/1999/xhtml}a") if toc_nav is not None else []:
                 file = resolve(nav_base, a.get("href") or "")[0]
                 toc.setdefault(file, hu("".join(a.itertext())))
@@ -461,9 +496,15 @@ def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> N
     info = book_metadata(wd)
     title = ": ".join(info["titles"][:2]) or wd.book_id
     authors = ", ".join(info["authors"])
-    meta = [";FFMETADATA1", f"title={ffmeta_escape(title)}", f"album={ffmeta_escape(title)}",
-            f"artist={ffmeta_escape(authors)}", f"album_artist={ffmeta_escape(authors)}",
-            "genre=Audiobook", "language=hun"]
+    meta = [
+        ";FFMETADATA1",
+        f"title={ffmeta_escape(title)}",
+        f"album={ffmeta_escape(title)}",
+        f"artist={ffmeta_escape(authors)}",
+        f"album_artist={ffmeta_escape(authors)}",
+        "genre=Audiobook",
+        "language=hun",
+    ]
     start = 0
     concat = []
     for chapter in book:
@@ -474,9 +515,9 @@ def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> N
         meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={ffmeta_escape(name)}"]
         start = end
     meta_path = chapters_dir / "chapters.txt"
-    meta_path.write_text("\n".join(meta) + "\n")
+    meta_path.write_text("\n".join(meta) + "\n", encoding="utf-8")
     list_path = chapters_dir / "concat.txt"
-    list_path.write_text("\n".join(concat) + "\n")
+    list_path.write_text("\n".join(concat) + "\n", encoding="utf-8")
 
     # The chapters are already AAC: join them without re-encoding, which takes seconds
     # instead of decoding the whole book into memory.
@@ -488,8 +529,9 @@ def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> N
         inputs += ["-i", str(cover_path)]
         maps += ["-map", "2:v", "-disposition:v:0", "attached_pic"]
     tmp = out.with_name(out.stem + ".tmp.m4b")  # players never see a half-written book
-    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *inputs, *maps, "-c", "copy", "-f", "mp4", str(tmp)],
-                   check=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-loglevel", "error", *inputs, *maps, "-c", "copy", "-f", "mp4", str(tmp)], check=True
+    )
     tmp.replace(out)
 
 
