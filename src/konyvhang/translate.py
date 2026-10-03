@@ -21,7 +21,11 @@ def book_caller(wd: WorkDir) -> Caller:
 
 
 def system_prompt(profile: str) -> str:
-    return (PROMPTS / "common.md").read_text() + "\n" + (PROMPTS / f"{profile}.md").read_text()
+    return (
+        (PROMPTS / "common.md").read_text(encoding="utf-8")
+        + "\n"
+        + (PROMPTS / f"{profile}.md").read_text(encoding="utf-8")
+    )
 
 
 def build_prompt(glossary: str, previous: list[str], segs: list[dict]) -> str:
@@ -95,12 +99,13 @@ def run(wd: WorkDir, call: Caller | None = None, max_chunks: int | None = None, 
         words = sum(len(segment.plain_text(s["src"]).split()) for s in chunk["segments"])
         log(f"[{chunk['id']}/{len(chunks):04d}] {len(chunk['segments'])} szegmens, {words} szó")
         try:
-            chunk["translation"] = translate_segments(wd, chunk["segments"], previous, call, log)
+            translation = translate_segments(wd, chunk["segments"], previous, call, log)
         except llm.UsageLimitError as e:
             log(f"Elfogyott a keret, a futás leáll. Folytatás később ugyanezzel a paranccsal.\n{e}")
             return False
+        chunk["translation"] = translation
         wd.save_chunk(chunk)
-        previous = [segment.plain_text(m) for m in chunk["translation"][-CONTEXT_SEGMENTS:]]
+        previous = [segment.plain_text(m) for m in translation[-CONTEXT_SEGMENTS:]]
         done_now += 1
 
     if not wd.labels_path.exists():
@@ -117,7 +122,7 @@ def collect_labels(wd: WorkDir) -> list[str]:
 def translate_labels(wd: WorkDir, call: Caller, log) -> None:
     labels = collect_labels(wd)
     if not labels:
-        wd.labels_path.write_text("{}")
+        wd.labels_path.write_text("{}", encoding="utf-8")
         return
     log(f"Tartalomjegyzék és cím: {len(labels)} címke")
     state = wd.load_state()
@@ -127,7 +132,7 @@ def translate_labels(wd: WorkDir, call: Caller, log) -> None:
         f"<labels>\n{json.dumps(unique, ensure_ascii=False)}\n</labels>\n"
     )
     try:
-        result = call(prompt, (PROMPTS / "labels.md").read_text(), state["model"])
+        result = call(prompt, (PROMPTS / "labels.md").read_text(encoding="utf-8"), state["model"])
         wd.add_usage(result.usage)
         text = result.text
         translated = llm.parse_json(text, "[")
@@ -140,4 +145,6 @@ def translate_labels(wd: WorkDir, call: Caller, log) -> None:
     if len(translated) != len(unique):
         log("A címkék száma eltér, az eredetiek maradnak.")
         return
-    wd.labels_path.write_text(json.dumps(dict(zip(unique, translated)), ensure_ascii=False, indent=1))
+    wd.labels_path.write_text(
+        json.dumps(dict(zip(unique, translated, strict=True)), ensure_ascii=False, indent=1), encoding="utf-8"
+    )

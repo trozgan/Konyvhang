@@ -1,5 +1,4 @@
 import re
-
 import zipfile
 
 from lxml import etree
@@ -33,8 +32,7 @@ def test_markup_numbers_inline_elements_without_attributes(epub_file):
     tree = load(epub_file, "OEBPS/text/ch1.xhtml")
     seg = segment.find_segments(tree)[1]
     assert segment.to_markup(seg) == (
-        'It was a <em n="1">dark</em> and stormy night, '
-        '<a n="2"><sup n="3">1</sup></a> said <span n="4">Tom</span>.'
+        'It was a <em n="1">dark</em> and stormy night, <a n="2"><sup n="3">1</sup></a> said <span n="4">Tom</span>.'
     )
     quote = segment.find_segments(tree)[3]
     assert segment.to_markup(quote) == 'A quote <img n="1"/> here.'
@@ -64,7 +62,9 @@ def test_translation_may_reorder_inline_elements(epub_file):
 def test_markup_numbers_match_inline_elements_on_many_elements():
     # Many short-lived lxml proxies: id()-based numbering broke here.
     body = "".join(f'<span class="c{i}">w{i}<em>x</em></span> ' for i in range(300))
-    tree = etree.ElementTree(etree.fromstring(f'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>{body}</p></body></html>'))
+    tree = etree.ElementTree(
+        etree.fromstring(f'<html xmlns="http://www.w3.org/1999/xhtml"><body><p>{body}</p></body></html>')
+    )
     seg = segment.find_segments(tree)[0]
     markup = segment.to_markup(seg)
     tags = [segment.local(el) for el in segment.inline_elements(seg)]

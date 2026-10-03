@@ -52,7 +52,7 @@ def read_book(zf: zipfile.ZipFile) -> Book:
     base = posixpath.dirname(opf_path)
 
     def resolve(href: str) -> str:
-        return posixpath.normpath(posixpath.join(base, href.split("#")[0]))
+        return posixpath.normpath(posixpath.join(base, href.split("#", maxsplit=1)[0]))
 
     items = {}
     nav_path = ncx_path = None

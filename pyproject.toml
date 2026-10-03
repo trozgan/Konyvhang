@@ -14,7 +14,14 @@ dependencies = [
 konyvhang = "konyvhang.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = [
+    "mypy>=2.4.0",
+    "numpy>=2.5.3",
+    "pytest>=8",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.10",
+    "types-pyyaml>=6.0.12.20260906",
+]
 tts = [
     "mlx-audio>=0.5.7",
     "torch>=2.14.1",
@@ -23,3 +30,42 @@ tts = [
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = ["work", "bench", "books", "voices", "tts_try"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "PTH"]
+ignore = [
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR2004",  # complexity counts: judged in review, not by number
+    "PLC0415",  # lazy imports keep the heavy TTS and SDK stacks optional
+    "RUF001", "RUF002", "RUF003",  # Hungarian text uses en dashes and typographic quotes on purpose
+]
+preview = true
+explicit-preview-rules = true
+extend-select = ["PLW1514"]  # open() and read_text()/write_text() without encoding: breaks on Windows
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004"]
+"tests/conftest.py" = ["E501"]  # fixture XHTML documents
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src/konyvhang", "scripts"]
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+
+[tool.coverage.run]
+source = ["konyvhang"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true
+exclude_also = ['if __name__ == "__main__":']

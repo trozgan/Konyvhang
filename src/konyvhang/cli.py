@@ -45,8 +45,16 @@ def choose_model(provider: str, model: str | None) -> str | None:
         sys.exit(str(e))
 
 
-def prepare(src: Path, profile: str, provider: str, model: str | None, book_id: str | None, force: bool,
-            references: bool = False) -> WorkDir:
+def prepare(
+    src: Path,
+    *,
+    profile: str,
+    provider: str,
+    model: str | None,
+    book_id: str | None,
+    force: bool,
+    references: bool = False,
+) -> WorkDir:
     model = choose_model(provider, model)  # before anything is written
     wd = WorkDir(work_root() / (book_id or slug(src.stem)))
     if wd.exists() and not force:
@@ -57,8 +65,10 @@ def prepare(src: Path, profile: str, provider: str, model: str | None, book_id: 
     shutil.copyfile(src, wd.source)
     wd.save_state({"profile": profile, "provider": provider, "model": model, "source_name": src.name})
     count = wd.write_chunks(references)
-    print(f"{wd.book_id}: {count} darab elkészült."
-          + ("" if references else " Az irodalomjegyzék és a tárgymutató angolul marad."))
+    print(
+        f"{wd.book_id}: {count} darab elkészült."
+        + ("" if references else " Az irodalomjegyzék és a tárgymutató angolul marad.")
+    )
     return wd
 
 
@@ -70,7 +80,15 @@ def build_glossary(wd: WorkDir) -> None:
 
 
 def cmd_prepare(args) -> None:
-    wd = prepare(Path(args.epub), args.profile, args.provider, args.model, args.id, args.force, args.references)
+    wd = prepare(
+        Path(args.epub),
+        profile=args.profile,
+        provider=args.provider,
+        model=args.model,
+        book_id=args.id,
+        force=args.force,
+        references=args.references,
+    )
     if args.no_glossary:
         return
     build_glossary(wd)
@@ -84,8 +102,15 @@ def cmd_run(args) -> None:
     if not wd.exists():
         if not args.profile:
             sys.exit("Új könyvnél meg kell adni a --profile kapcsolót (fiction vagy nonfiction).")
-        wd = prepare(src, args.profile, args.provider or "claude", args.model, args.id, force=False,
-                     references=args.references)
+        wd = prepare(
+            src,
+            profile=args.profile,
+            provider=args.provider or "claude",
+            model=args.model,
+            book_id=args.id,
+            force=False,
+            references=args.references,
+        )
     elif args.provider or args.model:  # switch an existing book, e.g. when one subscription runs out
         state = wd.load_state()
         state["provider"] = args.provider or state.get("provider", "claude")
@@ -110,7 +135,14 @@ def cmd_run(args) -> None:
         cmd = [sys.executable, "-u", "-m", "konyvhang", "audio", wd.book_id, "--follow", "--voice", args.voice]
         if args.skip:
             cmd += ["--skip", *args.skip]
-        audio_proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        audio_proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+        )
         threading.Thread(target=prefix_lines, args=(audio_proc.stdout, "[hang] "), daemon=True).start()
 
     done = translate.run(wd, log=lambda m: print(f"[fordítás] {m}", flush=True))
@@ -122,14 +154,16 @@ def cmd_run(args) -> None:
         if not done:
             print("[hang] A felolvasás a már lefordított részt még befejezi, aztán vár. Ctrl+C-vel leállítható.")
         if audio_proc.wait() != 0:
-            sys.exit(f"[hang] A felolvasás hibával állt le (kilépési kód {audio_proc.returncode}). "
-                     "Ugyanezzel a paranccsal folytatható.")
+            sys.exit(
+                f"[hang] A felolvasás hibával állt le (kilépési kód {audio_proc.returncode}). "
+                "Ugyanezzel a paranccsal folytatható."
+            )
     print(f"Kész. Az eredmény itt van: {wd.out_dir}")
 
 
 def prefix_lines(stream, prefix: str) -> None:
-    for line in stream:
-        line = line.rstrip()
+    for raw in stream:
+        line = raw.rstrip()
         if line and not ignored_audio_line(line):
             print(prefix + line, flush=True)
 
@@ -167,8 +201,10 @@ def cmd_status(args) -> None:
     chunks = wd.load_chunks()
     done = sum(c["translation"] is not None for c in chunks)
     usage = state.get("usage", {})
-    print(f"{wd.book_id} ({state['source_name']}), profil: {state['profile']}, "
-          f"szolgáltató: {state.get('provider', 'claude')}, modell: {state['model'] or 'alapértelmezett'}")
+    print(
+        f"{wd.book_id} ({state['source_name']}), profil: {state['profile']}, "
+        f"szolgáltató: {state.get('provider', 'claude')}, modell: {state['model'] or 'alapértelmezett'}"
+    )
     print(f"Szójegyzék: {'van' if wd.glossary_path.exists() else 'nincs'}")
     print(f"Lefordítva: {done}/{len(chunks)} darab")
     print(
@@ -179,32 +215,57 @@ def cmd_status(args) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="konyvhang", description="EPUB-könyvek fordítása magyarra és hangoskönyv készítése belőlük.")
+    for stream in (sys.stdout, sys.stderr):  # Hungarian text on Windows consoles and pipes
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    parser = argparse.ArgumentParser(
+        prog="konyvhang", description="EPUB-könyvek fordítása magyarra és hangoskönyv készítése belőlük."
+    )
     sub = parser.add_subparsers(required=True)
 
     p = sub.add_parser("run", help="minden egyben: szójegyzék, átnézés, fordítás és felolvasás együtt, EPUB, m4b")
     p.add_argument("epub")
     p.add_argument("--profile", choices=["fiction", "nonfiction"], help="új könyvnél kötelező")
-    p.add_argument("--provider", choices=llm.PROVIDERS, default="claude", help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs)")
-    p.add_argument("--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)")
+    p.add_argument(
+        "--provider",
+        choices=llm.PROVIDERS,
+        help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs); "
+        "új könyvnél alapból claude, meglévőnél a mentett marad",
+    )
+    p.add_argument(
+        "--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)"
+    )
     p.add_argument("--id", help="a munkamappa neve (alapból a fájlnévből)")
     p.add_argument("--voice", default="voices/narrator", help="referenciahang mappája")
     p.add_argument("--skip", nargs="*", default=[], help="ezeket a fájlnév-részleteket nem olvassa fel")
     p.add_argument("--no-audio", action="store_true", help="hangoskönyv nélkül")
-    p.add_argument("--references", action="store_true",
-                   help="az irodalomjegyzéket és a tárgymutatót is lefordítja (alapból angolul maradnak)")
+    p.add_argument(
+        "--references",
+        action="store_true",
+        help="az irodalomjegyzéket és a tárgymutatót is lefordítja (alapból angolul maradnak)",
+    )
     p.add_argument("--yes", action="store_true", help="nem áll meg a szójegyzék átnézésére")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("prepare", help="darabolás és szójegyzék")
     p.add_argument("epub")
     p.add_argument("--profile", choices=["fiction", "nonfiction"], required=True)
-    p.add_argument("--provider", choices=llm.PROVIDERS, help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs)")
-    p.add_argument("--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)")
+    p.add_argument(
+        "--provider",
+        choices=llm.PROVIDERS,
+        default="claude",
+        help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs)",
+    )
+    p.add_argument(
+        "--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)"
+    )
     p.add_argument("--id", help="a munkamappa neve (alapból a fájlnévből)")
     p.add_argument("--no-glossary", action="store_true", help="szójegyzék nélkül")
-    p.add_argument("--references", action="store_true",
-                   help="az irodalomjegyzéket és a tárgymutatót is lefordítja (alapból angolul maradnak)")
+    p.add_argument(
+        "--references",
+        action="store_true",
+        help="az irodalomjegyzéket és a tárgymutatót is lefordítja (alapból angolul maradnak)",
+    )
     p.add_argument("--force", action="store_true", help="a meglévő munkamappa törlése")
     p.set_defaults(func=cmd_prepare)
 

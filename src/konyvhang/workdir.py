@@ -30,7 +30,7 @@ class WorkDir:
 
     # state ---------------------------------------------------------------
     def load_state(self) -> dict:
-        return json.loads(self.state_path.read_text())
+        return json.loads(self.state_path.read_text(encoding="utf-8"))
 
     def save_state(self, state: dict) -> None:
         write_json(self.state_path, state)
@@ -45,17 +45,19 @@ class WorkDir:
 
     # glossary ------------------------------------------------------------
     def glossary_text(self) -> str:
-        return self.glossary_path.read_text() if self.glossary_path.exists() else ""
+        return self.glossary_path.read_text(encoding="utf-8") if self.glossary_path.exists() else ""
 
     def save_glossary(self, glossary: dict) -> None:
-        self.glossary_path.write_text(yaml.safe_dump(glossary, allow_unicode=True, sort_keys=False, width=100))
+        self.glossary_path.write_text(
+            yaml.safe_dump(glossary, allow_unicode=True, sort_keys=False, width=100), encoding="utf-8"
+        )
 
     # chunks --------------------------------------------------------------
     def chunk_paths(self) -> list[Path]:
         return sorted(self.chunks_dir.glob("*.json"))
 
     def load_chunks(self) -> list[dict]:
-        return [json.loads(p.read_text()) for p in self.chunk_paths()]
+        return [json.loads(p.read_text(encoding="utf-8")) for p in self.chunk_paths()]
 
     def save_chunk(self, chunk: dict) -> None:
         write_json(self.chunks_dir / f"{chunk['id']}.json", chunk)
@@ -71,7 +73,7 @@ class WorkDir:
 
 def write_json(path: Path, data) -> None:
     tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
     tmp.replace(path)
 
 
@@ -99,7 +101,8 @@ def build_chunks(epub_path: Path, references: bool = False) -> list[dict]:
     def words(segs):
         return sum(len(segment.plain_text(s["src"]).split()) for s in segs)
 
-    groups, current = [], []
+    groups: list[list[dict]] = []
+    current: list[dict] = []
     for segs in files:
         if current and words(current) + words(segs) > MAX_WORDS:
             groups.append(current)
@@ -110,17 +113,16 @@ def build_chunks(epub_path: Path, references: bool = False) -> list[dict]:
             current.extend(segs)
     if current:
         groups.append(current)
-    return [
-        {"id": f"{i + 1:04d}", "segments": segs, "translation": None}
-        for i, segs in enumerate(groups)
-    ]
+    return [{"id": f"{i + 1:04d}", "segments": segs, "translation": None} for i, segs in enumerate(groups)]
 
 
 def split_by_words(segs: list[dict]) -> list[list[dict]]:
     total = sum(len(segment.plain_text(s["src"]).split()) for s in segs)
     parts = -(-total // MAX_WORDS)
     target = total / parts
-    out, current, count = [], [], 0
+    out: list[list[dict]] = []
+    current: list[dict] = []
+    count = 0
     for s in segs:
         current.append(s)
         count += len(segment.plain_text(s["src"]).split())

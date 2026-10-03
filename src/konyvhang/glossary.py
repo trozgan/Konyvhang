@@ -1,7 +1,6 @@
 """Build the glossary: extract per slice of the book, then merge with Hungarian forms."""
 
 import json
-from pathlib import Path
 
 from . import llm, segment
 from .translate import PROMPTS, Caller, book_caller
@@ -32,15 +31,14 @@ def slices(wd: WorkDir) -> list[str]:
 
 def call_json(call: Caller, wd: WorkDir, prompt: str, system: str, model: str) -> dict:
     """Call and parse a JSON object; one retry on unparsable output."""
-    for attempt in range(2):
+    result = call(prompt, system, model)
+    wd.add_usage(result.usage)
+    try:
+        return parse_json_object(result.text)
+    except ValueError:
         result = call(prompt, system, model)
         wd.add_usage(result.usage)
-        try:
-            return parse_json_object(result.text)
-        except ValueError:
-            if attempt:
-                raise
-    raise AssertionError("unreachable")
+        return parse_json_object(result.text)
 
 
 def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
@@ -50,7 +48,7 @@ def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
     parts_dir = wd.root / "glossary_parts"
     parts_dir.mkdir(exist_ok=True)
     texts = slices(wd)
-    extract_system = (PROMPTS / "glossary_extract.md").read_text()
+    extract_system = (PROMPTS / "glossary_extract.md").read_text(encoding="utf-8")
 
     parts = []
     for i, text in enumerate(texts):
@@ -58,14 +56,14 @@ def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
         if not part_path.exists():
             log(f"Szójegyzék: {i + 1}/{len(texts)}. szelet kigyűjtése")
             part = call_json(call, wd, f"<book_slice>\n{text}\n</book_slice>", extract_system, state["model"])
-            part_path.write_text(json.dumps(part, ensure_ascii=False, indent=1))
-        parts.append(json.loads(part_path.read_text()))
+            part_path.write_text(json.dumps(part, ensure_ascii=False, indent=1), encoding="utf-8")
+        parts.append(json.loads(part_path.read_text(encoding="utf-8")))
 
     log("Szójegyzék: összefésülés és magyar alakok")
     prompt = (
         f"Műfaj: {PROFILE_NAMES[state['profile']]}\n\n"
         f"<extracted>\n{json.dumps(parts, ensure_ascii=False, indent=1)}\n</extracted>\n"
     )
-    glossary = call_json(call, wd, prompt, (PROMPTS / "glossary_merge.md").read_text(), state["model"])
+    glossary = call_json(call, wd, prompt, (PROMPTS / "glossary_merge.md").read_text(encoding="utf-8"), state["model"])
     wd.save_glossary(glossary)
     log(f"Szójegyzék kész: {wd.glossary_path}")

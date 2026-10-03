@@ -20,7 +20,7 @@ class FakeAnthropic:
         FakeAnthropic.last = params
         message = NS(
             stop_reason=self.stop_reason,
-            content=[NS(type="thinking", thinking=""), NS(type="text", text="<seg id=\"1\">Szia</seg>")],
+            content=[NS(type="thinking", thinking=""), NS(type="text", text='<seg id="1">Szia</seg>')],
             usage=NS(input_tokens=10, cache_read_input_tokens=5, cache_creation_input_tokens=None, output_tokens=7),
         )
 
@@ -57,11 +57,13 @@ def test_anthropic_incomplete_answers_are_errors(monkeypatch, stop_reason):
 def fake_openai(captured, finish="stop"):
     def create(**params):
         captured.update(params)
-        return iter([
-            NS(usage=None, choices=[NS(delta=NS(content="Szi"), finish_reason=None)]),
-            NS(usage=None, choices=[NS(delta=NS(content="a"), finish_reason=finish)]),
-            NS(usage=NS(prompt_tokens=20, completion_tokens=3, model_extra={"cost": 0.0012}), choices=[]),
-        ])
+        return iter(
+            [
+                NS(usage=None, choices=[NS(delta=NS(content="Szi"), finish_reason=None)]),
+                NS(usage=None, choices=[NS(delta=NS(content="a"), finish_reason=finish)]),
+                NS(usage=NS(prompt_tokens=20, completion_tokens=3, model_extra={"cost": 0.0012}), choices=[]),
+            ]
+        )
 
     def client(**kw):
         captured["client"] = kw

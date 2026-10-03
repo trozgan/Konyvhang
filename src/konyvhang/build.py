@@ -66,10 +66,12 @@ def build(wd: WorkDir, partial: bool = False, log=print) -> Path:
 
     by_file: dict[str, dict[int, str]] = defaultdict(dict)
     for chunk in chunks:
-        for seg, markup in zip(chunk["segments"], chunk["translation"] or []):
+        if chunk["translation"] is None:
+            continue
+        for seg, markup in zip(chunk["segments"], chunk["translation"], strict=True):
             by_file[seg["file"]][seg["idx"]] = markup
 
-    labels = json.loads(wd.labels_path.read_text()) if wd.labels_path.exists() else {}
+    labels = json.loads(wd.labels_path.read_text(encoding="utf-8")) if wd.labels_path.exists() else {}
     replaced: dict[str, bytes] = {}
     with zipfile.ZipFile(wd.source) as zf:
         book = epub.read_book(zf)
@@ -102,6 +104,6 @@ def build(wd: WorkDir, partial: bool = False, log=print) -> Path:
     log(f"Kész: {out}")
 
     if shutil.which("epubcheck"):
-        result = subprocess.run(["epubcheck", str(out)], capture_output=True, text=True)
+        result = subprocess.run(["epubcheck", str(out)], capture_output=True, text=True, encoding="utf-8", check=False)
         log(result.stdout.strip().splitlines()[-1] if result.stdout.strip() else result.stderr.strip())
     return out

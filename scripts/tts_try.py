@@ -45,12 +45,18 @@ def generate(model, text: str, path: Path, seed: int | None = None, ref: Path | 
     kwargs = {}
     if ref:
         kwargs["ref_audio"] = str(ref / "voice.wav")
-        kwargs["ref_text"] = (ref / "voice.txt").read_text().strip()
+        kwargs["ref_text"] = (ref / "voice.txt").read_text(encoding="utf-8").strip()
     start = time.perf_counter()
-    result = next(model.generate(
-        text=text, temperature=TEMPERATURE, top_k=TOP_K, seed=seed,
-        max_new_tokens=frames_for(text), **kwargs,
-    ))
+    result = next(
+        model.generate(
+            text=text,
+            temperature=TEMPERATURE,
+            top_k=TOP_K,
+            seed=seed,
+            max_new_tokens=frames_for(text),
+            **kwargs,
+        )
+    )
     elapsed = time.perf_counter() - start
     audio_write(str(path), result.audio, result.sample_rate)
     duration = result.audio.shape[0] / result.sample_rate
@@ -68,7 +74,7 @@ def main() -> None:
     args = parser.parse_args()
 
     OUT.mkdir(exist_ok=True)
-    text = args.text_file.read_text() if args.text_file else (args.text or SAMPLE)
+    text = args.text_file.read_text(encoding="utf-8") if args.text_file else (args.text or SAMPLE)
 
     from mlx_audio.tts import load
 
@@ -86,7 +92,7 @@ def main() -> None:
         dest = VOICES / args.name
         dest.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dest / "voice.wav")
-        (dest / "voice.txt").write_text(VOICE_TEXT + "\n")
+        (dest / "voice.txt").write_text(VOICE_TEXT + "\n", encoding="utf-8")
         print(f"Referenciahang mentve: {dest}")
         args.ref = dest
 
