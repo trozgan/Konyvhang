@@ -129,11 +129,19 @@ uv run --group tts konyvhang audio <könyv> --follow              # a fordítás
 - 8-as kötegekben generál (M4 Pro-n kb. négyszer gyorsabb a valós időnél), és minden darabot Whisperrel visszaellenőriz; a gyenge darabokat egyenként újragenerálja, ami így sem jó, az a `report.json`-ba kerül.
 - Kimenet: fejezetenként `.m4a`, a végén borítós, fejezetjeles `.m4b` a `work/<könyv>/out/` mappában.
 
-## Tesztek
+## Fejlesztés
 
 ```
-uv run pytest
+uv sync                         # fejlesztői környezet
+uv run pre-commit install       # egyszer klónonként: commit előtt ruff, mypy és fájlellenőrzések
+uv run ruff check .             # lint (bandit-biztonsági és típusannotációs szabályokkal)
+uv run ruff format .            # formázás
+uv run mypy                     # típusellenőrzés, --strict: src, scripts és tests
+uv run pytest --cov             # tesztek, 100% sor- és áglefedettség alatt elbukik
 ```
+
+A CI ugyanezeket futtatja Linuxon, macOS-en és Windowson, emellett `pip-audit`-tal
+ellenőrzi a zárolt függőségeket, a CodeQL pedig biztonsági elemzést végez.
 
 ## Licencek
 

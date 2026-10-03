@@ -13,12 +13,20 @@ uv run ruff check .             # lint (fix: --fix)
 uv run ruff format .            # format
 uv run mypy                     # types
 uv run pytest --cov             # tests; fails below 100% line+branch coverage
+uv run pre-commit install       # once per clone: ruff, mypy and file hygiene before each commit
 uv run konyvhang --help         # the CLI
 ```
 
 `/check` runs every gate in order; `/smoke` runs the sample book end to end with a real
 model. CI (`.github/workflows/ci.yml`) runs lint, format, mypy and the tests on Linux,
-macOS and Windows with Python 3.12 and 3.13; the `CI OK` job is the required check on `main`.
+macOS and Windows with Python 3.12 and 3.13, and `pip-audit` on every locked dependency
+group; the `CI OK` job is the required check on `main`. CodeQL (`.github/workflows/codeql.yml`)
+scans the Python code on pull requests, on `main` and weekly.
+
+Mypy runs with `strict = true` over `src`, `scripts` and `tests`; ruff selects the bandit
+(`S`) and annotation (`ANN`) rules too. Silence a rule only where it fires on intended
+behaviour, as narrowly as possible (`per-file-ignores` or `# noqa: <code> - reason`), and a
+`# type: ignore` always names its error code.
 
 ## Definition of done
 
@@ -60,6 +68,7 @@ Data flow: EPUB → segments → chunks → model → validated translation → 
 - No network, no real CLIs, no real models in tests: fake callers (see `FakeClaude` in `tests/test_pipeline.py`), monkeypatched `subprocess`, fake SDK clients (`tests/test_llm.py`), fake `mlx_audio` modules.
 - `tests/conftest.py` builds a small EPUB fixture; `ffmpeg` must be on `PATH` (the m4b tests use it).
 - Tests must also pass on Windows: `encoding="utf-8"`, `pathlib`, no POSIX-only paths.
+- Tests are type-checked too: annotate test functions (`-> None`), fixtures and fakes; `Any` is fine for fake SDK objects.
 
 ## Never
 
