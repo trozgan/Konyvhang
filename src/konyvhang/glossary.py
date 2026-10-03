@@ -3,8 +3,8 @@
 import json
 from pathlib import Path
 
-from . import claude_cli, segment
-from .translate import PROMPTS, Caller
+from . import llm, segment
+from .translate import PROMPTS, Caller, book_caller
 from .workdir import WorkDir
 
 SLICE_WORDS = 40000
@@ -12,7 +12,7 @@ PROFILE_NAMES = {"fiction": "szépirodalom", "nonfiction": "szakkönyv"}
 
 
 def parse_json_object(text: str) -> dict:
-    return claude_cli.parse_json(text, "{")
+    return llm.parse_json(text, "{")
 
 
 def slices(wd: WorkDir) -> list[str]:
@@ -43,8 +43,9 @@ def call_json(call: Caller, wd: WorkDir, prompt: str, system: str, model: str) -
     raise AssertionError("unreachable")
 
 
-def build(wd: WorkDir, call: Caller = claude_cli.call, log=print) -> None:
+def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
     """Extraction results are cached in glossary_parts/, so an interrupted run resumes."""
+    call = call or book_caller(wd)
     state = wd.load_state()
     parts_dir = wd.root / "glossary_parts"
     parts_dir.mkdir(exist_ok=True)

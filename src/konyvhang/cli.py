@@ -10,7 +10,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import build, claude_cli, glossary, translate
+from . import build, glossary, llm, translate
 from .workdir import WorkDir
 
 
@@ -29,7 +29,25 @@ def open_book(book_id: str) -> WorkDir:
     return wd
 
 
-def prepare(src: Path, profile: str, model: str, book_id: str | None, force: bool, references: bool = False) -> WorkDir:
+def check_provider(provider: str) -> None:
+    try:
+        llm.check_ready(provider)
+    except llm.LLMError as e:
+        sys.exit(str(e))
+
+
+def choose_model(provider: str, model: str | None) -> str | None:
+    """The model for this provider, after checking that the provider can be reached at all."""
+    check_provider(provider)
+    try:
+        return llm.default_model(provider, model)
+    except llm.LLMError as e:
+        sys.exit(str(e))
+
+
+def prepare(src: Path, profile: str, provider: str, model: str | None, book_id: str | None, force: bool,
+            references: bool = False) -> WorkDir:
+    model = choose_model(provider, model)  # before anything is written
     wd = WorkDir(work_root() / (book_id or slug(src.stem)))
     if wd.exists() and not force:
         sys.exit(f"Már létezik: {wd.root}. A --force kapcsolóval újrakezdheted.")
@@ -37,7 +55,7 @@ def prepare(src: Path, profile: str, model: str, book_id: str | None, force: boo
         shutil.rmtree(wd.root)
     wd.root.mkdir(parents=True)
     shutil.copyfile(src, wd.source)
-    wd.save_state({"profile": profile, "model": model, "source_name": src.name})
+    wd.save_state({"profile": profile, "provider": provider, "model": model, "source_name": src.name})
     count = wd.write_chunks(references)
     print(f"{wd.book_id}: {count} darab elkészült."
           + ("" if references else " Az irodalomjegyzék és a tárgymutató angolul marad."))
@@ -47,12 +65,12 @@ def prepare(src: Path, profile: str, model: str, book_id: str | None, force: boo
 def build_glossary(wd: WorkDir) -> None:
     try:
         glossary.build(wd)
-    except claude_cli.UsageLimitError as e:
+    except llm.UsageLimitError as e:
         sys.exit(f"Elfogyott a keret. Folytatás később ugyanezzel a paranccsal.\n{e}")
 
 
 def cmd_prepare(args) -> None:
-    wd = prepare(Path(args.epub), args.profile, args.model, args.id, args.force, args.references)
+    wd = prepare(Path(args.epub), args.profile, args.provider, args.model, args.id, args.force, args.references)
     if args.no_glossary:
         return
     build_glossary(wd)
@@ -66,7 +84,16 @@ def cmd_run(args) -> None:
     if not wd.exists():
         if not args.profile:
             sys.exit("Új könyvnél meg kell adni a --profile kapcsolót (fiction vagy nonfiction).")
-        wd = prepare(src, args.profile, args.model, args.id, force=False, references=args.references)
+        wd = prepare(src, args.profile, args.provider or "claude", args.model, args.id, force=False,
+                     references=args.references)
+    elif args.provider or args.model:  # switch an existing book, e.g. when one subscription runs out
+        state = wd.load_state()
+        state["provider"] = args.provider or state.get("provider", "claude")
+        state["model"] = choose_model(state["provider"], args.model)
+        wd.save_state(state)
+        print(f"Szolgáltató: {state['provider']}, modell: {state['model'] or 'alapértelmezett'}")
+    else:
+        check_provider(wd.load_state().get("provider", "claude"))
 
     if not wd.glossary_path.exists():
         build_glossary(wd)
@@ -140,13 +167,14 @@ def cmd_status(args) -> None:
     chunks = wd.load_chunks()
     done = sum(c["translation"] is not None for c in chunks)
     usage = state.get("usage", {})
-    print(f"{wd.book_id} ({state['source_name']}), profil: {state['profile']}, modell: {state['model']}")
+    print(f"{wd.book_id} ({state['source_name']}), profil: {state['profile']}, "
+          f"szolgáltató: {state.get('provider', 'claude')}, modell: {state['model'] or 'alapértelmezett'}")
     print(f"Szójegyzék: {'van' if wd.glossary_path.exists() else 'nincs'}")
     print(f"Lefordítva: {done}/{len(chunks)} darab")
     print(
         f"Felhasználás: {usage.get('calls', 0)} hívás, {usage.get('input_tokens', 0):,} bemeneti és "
-        f"{usage.get('output_tokens', 0):,} kimeneti token "
-        f"(API-listaáron kb. ${usage.get('cost_usd', 0):.2f}; az előfizetés ezt nem számlázza)"
+        f"{usage.get('output_tokens', 0):,} kimeneti token"
+        + (f", ${usage['cost_usd']:.4f}" if usage.get("cost_usd") else "")
     )
 
 
@@ -157,7 +185,8 @@ def main() -> None:
     p = sub.add_parser("run", help="minden egyben: szójegyzék, átnézés, fordítás és felolvasás együtt, EPUB, m4b")
     p.add_argument("epub")
     p.add_argument("--profile", choices=["fiction", "nonfiction"], help="új könyvnél kötelező")
-    p.add_argument("--model", default="opus")
+    p.add_argument("--provider", choices=llm.PROVIDERS, default="claude", help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs)")
+    p.add_argument("--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)")
     p.add_argument("--id", help="a munkamappa neve (alapból a fájlnévből)")
     p.add_argument("--voice", default="voices/narrator", help="referenciahang mappája")
     p.add_argument("--skip", nargs="*", default=[], help="ezeket a fájlnév-részleteket nem olvassa fel")
@@ -170,7 +199,8 @@ def main() -> None:
     p = sub.add_parser("prepare", help="darabolás és szójegyzék")
     p.add_argument("epub")
     p.add_argument("--profile", choices=["fiction", "nonfiction"], required=True)
-    p.add_argument("--model", default="opus")
+    p.add_argument("--provider", choices=llm.PROVIDERS, help="claude, codex (előfizetés) vagy anthropic, openai, openrouter (API-kulcs)")
+    p.add_argument("--model", help="a modell neve (claude: opus, anthropic: claude-opus-5-5; openai és openrouter: kötelező)")
     p.add_argument("--id", help="a munkamappa neve (alapból a fájlnévből)")
     p.add_argument("--no-glossary", action="store_true", help="szójegyzék nélkül")
     p.add_argument("--references", action="store_true",

@@ -171,27 +171,30 @@ def add_pieces(book: list[dict], spoken: dict[str, str]) -> None:
 
 
 # numbers -------------------------------------------------------------------
-SPEECH_MODEL = "sonnet"
 SPEECH_BATCH = 60
 DIGIT = re.compile(r"\d")
 
 
 def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
     """Spoken forms for texts with digits, made once by Claude and cached in speech.json."""
-    from . import claude_cli
+    from . import llm
 
     path = wd.root / "speech.json"
     cache = json.loads(path.read_text()) if path.exists() else {}
     todo = list(dict.fromkeys(t for t in texts if DIGIT.search(t) and t not in cache))
     system = (Path(__file__).parent / "prompts" / "speech.md").read_text()
+    state = wd.load_state()
+    provider = state.get("provider", "claude")
+    call = llm.caller(provider)
+    model = llm.LIGHT_MODEL.get(provider) or state["model"]
     for i in range(0, len(todo), SPEECH_BATCH):
         batch = todo[i : i + SPEECH_BATCH]
         log(f"Számok kiírása betűvel: {i + len(batch)}/{len(todo)} bekezdés")
         try:
-            result = claude_cli.call(json.dumps(batch, ensure_ascii=False), system, SPEECH_MODEL)
+            result = call(json.dumps(batch, ensure_ascii=False), system, model)
             text = result.text
-            spoken = claude_cli.parse_json(text, "[")
-        except (ValueError, claude_cli.ClaudeError) as e:
+            spoken = llm.parse_json(text, "[")
+        except (ValueError, llm.LLMError) as e:
             log(f"  nem sikerült, ezek a bekezdések számjegyekkel maradnak: {str(e)[:200]}")
             continue
         if len(spoken) != len(batch):

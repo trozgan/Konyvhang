@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from konyvhang import build, claude_cli, translate
+from konyvhang import build, llm, translate
 from konyvhang.workdir import WorkDir
 
 
@@ -32,11 +32,11 @@ class FakeClaude:
         self.calls += 1
         action = self.script.pop(0) if self.script else "ok"
         if action == "limit":
-            raise claude_cli.UsageLimitError("You've hit your limit · resets 5pm")
+            raise llm.UsageLimitError("You've hit your limit · resets 5pm")
         if action == "bad":
-            return claude_cli.Result("Sorry.")
+            return llm.Result("Sorry.")
         text = fake_labels(prompt) if "<labels>" in prompt else fake_translation(prompt)
-        return claude_cli.Result(text, {"input_tokens": 10, "output_tokens": 5})
+        return llm.Result(text, {"input_tokens": 10, "output_tokens": 5})
 
 
 @pytest.fixture

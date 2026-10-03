@@ -37,7 +37,23 @@ def test_no_segments():
 
 
 def test_parse_json_ignores_text_after_the_value():
-    from konyvhang.claude_cli import parse_json
+    from konyvhang.llm import parse_json
 
     assert parse_json('Íme:\n["a", "b [x]"]\nMegjegyzés: [már nem elérhető]', "[") == ["a", "b [x]"]
     assert parse_json('```json\n{"k": 1}\n```', "{") == {"k": 1}
+
+
+def test_provider_defaults_and_checks(monkeypatch):
+    from konyvhang import llm
+
+    assert llm.default_model("claude", None) == "opus"
+    assert llm.default_model("anthropic", None) == "claude-opus-5-5"
+    assert llm.default_model("codex", None) is None  # Codex picks its own default
+    assert llm.default_model("openrouter", "some/model") == "some/model"
+    with pytest.raises(llm.LLMError, match="--model"):
+        llm.default_model("openai", None)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    with pytest.raises(llm.LLMError, match="OPENROUTER_API_KEY"):
+        llm.check_ready("openrouter")
+    with pytest.raises(llm.LLMError, match="Ismeretlen"):
+        llm.caller("gemini")

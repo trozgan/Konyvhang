@@ -6,13 +6,18 @@ from pathlib import Path
 
 from lxml import etree
 
-from . import claude_cli, segment, validate
+from . import llm, segment, validate
 from .workdir import WorkDir
 
 PROMPTS = Path(__file__).parent / "prompts"
 CONTEXT_SEGMENTS = 10
 
-Caller = Callable[[str, str, str], claude_cli.Result]
+Caller = llm.Caller
+
+
+def book_caller(wd: WorkDir) -> Caller:
+    """The model provider chosen for this book (books from before providers existed use claude)."""
+    return llm.caller(wd.load_state().get("provider", "claude"))
 
 
 def system_prompt(profile: str) -> str:
@@ -55,8 +60,8 @@ def translate_segments(
             wd.add_usage(result.usage)
             parsed = validate.parse_and_check(result.text, source)
             return [inner_markup(parsed[str(i + 1)]) for i in range(len(segs))]
-        except (validate.ValidationError, claude_cli.ClaudeError) as e:
-            if isinstance(e, claude_cli.UsageLimitError):
+        except (validate.ValidationError, llm.LLMError) as e:
+            if isinstance(e, llm.UsageLimitError):
                 raise
             error = str(e)
             log(f"  hibás válasz ({attempt + 1}. próba): {error.splitlines()[0][:200]}")
@@ -75,8 +80,9 @@ def inner_markup(seg: etree._Element) -> str:
     return xml[xml.index(">") + 1 : xml.rindex("</seg>")] if not xml.endswith("/>") else ""
 
 
-def run(wd: WorkDir, call: Caller = claude_cli.call, max_chunks: int | None = None, log=print) -> bool:
+def run(wd: WorkDir, call: Caller | None = None, max_chunks: int | None = None, log=print) -> bool:
     """Translate every unfinished chunk. Returns True when the whole book is done."""
+    call = call or book_caller(wd)
     chunks = wd.load_chunks()
     previous: list[str] = []
     done_now = 0
@@ -90,7 +96,7 @@ def run(wd: WorkDir, call: Caller = claude_cli.call, max_chunks: int | None = No
         log(f"[{chunk['id']}/{len(chunks):04d}] {len(chunk['segments'])} szegmens, {words} szó")
         try:
             chunk["translation"] = translate_segments(wd, chunk["segments"], previous, call, log)
-        except claude_cli.UsageLimitError as e:
+        except llm.UsageLimitError as e:
             log(f"Elfogyott a keret, a futás leáll. Folytatás később ugyanezzel a paranccsal.\n{e}")
             return False
         wd.save_chunk(chunk)
@@ -124,11 +130,11 @@ def translate_labels(wd: WorkDir, call: Caller, log) -> None:
         result = call(prompt, (PROMPTS / "labels.md").read_text(), state["model"])
         wd.add_usage(result.usage)
         text = result.text
-        translated = claude_cli.parse_json(text, "[")
-    except claude_cli.UsageLimitError as e:
+        translated = llm.parse_json(text, "[")
+    except llm.UsageLimitError as e:
         log(f"Elfogyott a keret a címkék előtt; a következő futás pótolja.\n{e}")
         return
-    except (ValueError, claude_cli.ClaudeError) as e:
+    except (ValueError, llm.LLMError) as e:
         log(f"A címkék fordítása nem sikerült, az eredetiek maradnak: {e}")
         return
     if len(translated) != len(unique):
