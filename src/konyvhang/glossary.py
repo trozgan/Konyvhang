@@ -1,6 +1,8 @@
 """Build the glossary: extract per slice of the book, then merge with Hungarian forms."""
 
 import json
+from collections.abc import Callable
+from typing import Any
 
 from . import llm, segment
 from .translate import PROMPTS, Caller, book_caller
@@ -10,8 +12,9 @@ SLICE_WORDS = 40000
 PROFILE_NAMES = {"fiction": "szépirodalom", "nonfiction": "szakkönyv"}
 
 
-def parse_json_object(text: str) -> dict:
-    return llm.parse_json(text, "{")
+def parse_json_object(text: str) -> dict[str, Any]:
+    obj: dict[str, Any] = llm.parse_json(text, "{")
+    return obj
 
 
 def slices(wd: WorkDir) -> list[str]:
@@ -29,7 +32,7 @@ def slices(wd: WorkDir) -> list[str]:
     return out
 
 
-def call_json(call: Caller, wd: WorkDir, prompt: str, system: str, model: str) -> dict:
+def call_json(call: Caller, wd: WorkDir, prompt: str, system: str, model: str) -> dict[str, Any]:
     """Call and parse a JSON object; one retry on unparsable output."""
     result = call(prompt, system, model)
     wd.add_usage(result.usage)
@@ -41,7 +44,7 @@ def call_json(call: Caller, wd: WorkDir, prompt: str, system: str, model: str) -
         return parse_json_object(result.text)
 
 
-def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
+def build(wd: WorkDir, call: Caller | None = None, log: Callable[[str], None] = print) -> None:
     """Extraction results are cached in glossary_parts/, so an interrupted run resumes."""
     call = call or book_caller(wd)
     state = wd.load_state()

@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import zipfile
 from collections import defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 from lxml import etree
@@ -21,7 +22,7 @@ def label_text(el: etree._Element) -> str:
     return re.sub(r"\s+", " ", "".join(el.itertext())).strip()
 
 
-def label_elements(zf: zipfile.ZipFile, book: epub.Book) -> dict[str, tuple[etree._ElementTree, list]]:
+def label_elements(zf: zipfile.ZipFile, book: epub.Book) -> dict[str, tuple[etree._ElementTree, list[etree._Element]]]:
     """Title, nav links and NCX labels, grouped by file: {path: (tree, [elements])}."""
     out = {}
     opf = epub.parse_xml(zf.read(book.opf_path))
@@ -55,7 +56,7 @@ def set_lang(tree: etree._ElementTree) -> None:
                 el.set(attr, "hu")
 
 
-def build(wd: WorkDir, partial: bool = False, log=print) -> Path:
+def build(wd: WorkDir, partial: bool = False, log: Callable[[str], None] = print) -> Path:
     chunks = wd.load_chunks()
     missing = [c["id"] for c in chunks if c["translation"] is None]
     if missing and not partial:

@@ -12,6 +12,7 @@ import argparse
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 MODEL = "bosonai/higgs-audio-v3-tts-4b"
 OUT = Path("tts_try")
@@ -39,10 +40,10 @@ def frames_for(text: str) -> int:
     return max(400, int(len(text) * 0.12 * 25))
 
 
-def generate(model, text: str, path: Path, seed: int | None = None, ref: Path | None = None) -> None:
+def generate(model: Any, text: str, path: Path, seed: int | None = None, ref: Path | None = None) -> None:  # noqa: ANN401 - mlx_audio has no types
     from mlx_audio.audio_io import write as audio_write
 
-    kwargs = {}
+    kwargs: dict[str, str] = {}
     if ref:
         kwargs["ref_audio"] = str(ref / "voice.wav")
         kwargs["ref_text"] = (ref / "voice.txt").read_text(encoding="utf-8").strip()

@@ -3,6 +3,7 @@
 import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from lxml import etree
 
@@ -28,7 +29,7 @@ def system_prompt(profile: str) -> str:
     )
 
 
-def build_prompt(glossary: str, previous: list[str], segs: list[dict]) -> str:
+def build_prompt(glossary: str, previous: list[str], segs: list[dict[str, Any]]) -> str:
     source = "\n".join(f'<seg id="{i + 1}">{s["src"]}</seg>' for i, s in enumerate(segs))
     context = "\n\n".join(previous)
     return (
@@ -39,7 +40,7 @@ def build_prompt(glossary: str, previous: list[str], segs: list[dict]) -> str:
 
 
 def translate_segments(
-    wd: WorkDir, segs: list[dict], previous: list[str], call: Caller, log: Callable[[str], None]
+    wd: WorkDir, segs: list[dict[str, Any]], previous: list[str], call: Caller, log: Callable[[str], None]
 ) -> list[str]:
     """Translate segments; returns markup per segment, in order.
 
@@ -84,7 +85,9 @@ def inner_markup(seg: etree._Element) -> str:
     return xml[xml.index(">") + 1 : xml.rindex("</seg>")] if not xml.endswith("/>") else ""
 
 
-def run(wd: WorkDir, call: Caller | None = None, max_chunks: int | None = None, log=print) -> bool:
+def run(
+    wd: WorkDir, call: Caller | None = None, max_chunks: int | None = None, log: Callable[[str], None] = print
+) -> bool:
     """Translate every unfinished chunk. Returns True when the whole book is done."""
     call = call or book_caller(wd)
     chunks = wd.load_chunks()
@@ -122,7 +125,7 @@ def collect_labels(wd: WorkDir) -> list[str]:
     return [text for _, text in label_sources(wd)]
 
 
-def translate_labels(wd: WorkDir, call: Caller, log) -> None:
+def translate_labels(wd: WorkDir, call: Caller, log: Callable[[str], None]) -> None:
     labels = collect_labels(wd)
     if not labels:
         wd.labels_path.write_text("{}", encoding="utf-8")

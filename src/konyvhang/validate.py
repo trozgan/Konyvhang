@@ -26,7 +26,7 @@ def parse_segments(text: str) -> dict[str, etree._Element]:
         root = etree.fromstring(f"<root>{body}</root>")
     except etree.XMLSyntaxError as e:
         raise ValidationError(f"A válasz nem jól formált XML: {e}") from None
-    segs = {}
+    segs: dict[str, etree._Element] = {}
     for seg in root.iterfind("seg"):
         sid = seg.get("id")
         if sid is None:
@@ -37,9 +37,9 @@ def parse_segments(text: str) -> dict[str, etree._Element]:
     return segs
 
 
-def numeric_entity(m: re.Match) -> str:
+def numeric_entity(m: re.Match[str]) -> str:
     """HTML named entities such as &nbsp; are not XML: turn them into character references."""
-    name = m.group(1)
+    name: str = m.group(1)
     if name in XML_ENTITIES or name not in name2codepoint:
         return m.group(0)
     return f"&#{name2codepoint[name]};"

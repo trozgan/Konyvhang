@@ -66,11 +66,25 @@ jobs:
           path: coverage.xml
           if-no-files-found: ignore
 
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      # Every group from uv.lock, the Apple-Silicon tts stack included: pip-audit only looks the
+      # pinned versions up in the advisory database, it installs nothing.
+      - name: Export the locked dependencies
+        run: uv export --all-groups --no-emit-project --format requirements-txt -o "$RUNNER_TEMP/requirements.txt"
+      - name: pip-audit
+        run: uvx pip-audit@2.10.1 --strict --disable-pip --require-hashes --progress-spinner off -r "$RUNNER_TEMP/requirements.txt"
+
   ci-ok:
     # The single required status check for branch protection: green only when every job is.
     name: CI OK
     if: always()
-    needs: [lint, test]
+    needs: [lint, test, audit]
     runs-on: ubuntu-latest
     steps:
       - name: All jobs passed

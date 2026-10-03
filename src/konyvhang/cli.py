@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import build, glossary, llm, translate
@@ -82,7 +83,7 @@ def build_glossary(wd: WorkDir) -> None:
         sys.exit(f"A szójegyzék nem készült el; a kész szeletek megmaradnak, újrafuttatható.\n{e}")
 
 
-def cmd_prepare(args) -> None:
+def cmd_prepare(args: argparse.Namespace) -> None:
     wd = prepare(
         Path(args.epub),
         profile=args.profile,
@@ -98,7 +99,7 @@ def cmd_prepare(args) -> None:
     print(f"Nézd át és javítsd a szójegyzéket, mielőtt fordítasz: {wd.glossary_path}")
 
 
-def cmd_run(args) -> None:
+def cmd_run(args: argparse.Namespace) -> None:
     """The whole pipeline in one command; rerunning it continues where it stopped."""
     src = Path(args.epub)
     wd = WorkDir(work_root() / (args.id or slug(src.stem)))
@@ -129,7 +130,7 @@ def cmd_run(args) -> None:
             print(f"\nNézd át és javítsd a szójegyzéket: {wd.glossary_path}")
             input("Ha kész vagy, nyomj Entert a fordítás indításához… ")
 
-    audio: tuple[subprocess.Popen, threading.Thread] | None = None  # the child and the thread printing its output
+    audio: tuple[subprocess.Popen[str], threading.Thread] | None = None  # the child and the thread printing its output
     if args.no_audio:
         pass
     elif importlib.util.find_spec("mlx_audio") is None:
@@ -166,7 +167,7 @@ def cmd_run(args) -> None:
     print(f"Kész. Az eredmény itt van: {wd.out_dir}")
 
 
-def prefix_lines(stream, prefix: str) -> None:
+def prefix_lines(stream: Iterable[str], prefix: str) -> None:
     for raw in stream:
         line = raw.rstrip()
         if line and not ignored_audio_line(line):
@@ -178,11 +179,11 @@ def ignored_audio_line(line: str) -> bool:
     return bool(re.search(r"warn|Fetching \d+ files|kernel = np\.where", line, re.I))
 
 
-def cmd_glossary(args) -> None:
+def cmd_glossary(args: argparse.Namespace) -> None:
     build_glossary(open_book(args.id))
 
 
-def cmd_translate(args) -> None:
+def cmd_translate(args: argparse.Namespace) -> None:
     wd = open_book(args.id)
     if not wd.glossary_path.exists():
         print("Figyelem: nincs szójegyzék, a fordítás enélkül indul.")
@@ -190,17 +191,17 @@ def cmd_translate(args) -> None:
         print(f"Minden darab kész. Összeállítás: konyvhang build {wd.book_id}")
 
 
-def cmd_build(args) -> None:
+def cmd_build(args: argparse.Namespace) -> None:
     build.build(open_book(args.id), partial=args.partial)
 
 
-def cmd_audio(args) -> None:
+def cmd_audio(args: argparse.Namespace) -> None:
     from . import audio  # needs the tts dependency group
 
     (audio.follow if args.follow else audio.run)(open_book(args.id), Path(args.voice), args.skip)
 
 
-def cmd_status(args) -> None:
+def cmd_status(args: argparse.Namespace) -> None:
     wd = open_book(args.id)
     state = wd.load_state()
     chunks = wd.load_chunks()

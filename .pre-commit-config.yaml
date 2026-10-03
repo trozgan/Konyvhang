@@ -1,0 +1,33 @@
+# Local gates before each commit: uv run pre-commit install (once per clone).
+# CI runs the same checks; this only catches them earlier.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      # The prompts go to the model byte for byte, the sample EPUB is binary, and the
+      # fixture XHTML in conftest.py is test data: whitespace fixers keep away from them.
+      - id: end-of-file-fixer
+        exclude: ^(src/konyvhang/prompts/|samples/|tests/conftest\.py$)
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+        exclude: ^(src/konyvhang/prompts/|samples/|tests/conftest\.py$)
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10  # keep equal to ruff in uv.lock
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        pass_filenames: false

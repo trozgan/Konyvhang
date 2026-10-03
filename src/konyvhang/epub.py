@@ -5,6 +5,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from html.entities import name2codepoint
+from typing import cast
 from urllib.parse import unquote
 
 from lxml import etree
@@ -31,7 +32,7 @@ class Book:
 def parse_xml(data: bytes) -> etree._ElementTree:
     """Parse XHTML/XML. HTML named entities such as &nbsp; become numeric references first."""
 
-    def fix(m: re.Match) -> bytes:
+    def fix(m: re.Match[bytes]) -> bytes:
         name = m.group(1).decode()
         if name in XML_ENTITIES or name not in name2codepoint:
             return m.group(0)
@@ -48,28 +49,29 @@ def serialize(tree: etree._ElementTree) -> bytes:
 
 def read_book(zf: zipfile.ZipFile) -> Book:
     container = parse_xml(zf.read("META-INF/container.xml"))
-    opf_path = container.find(".//c:rootfile", NS).get("full-path")
+    # An EPUB without a rootfile or href attributes fails here; the casts only tell mypy what is expected.
+    opf_path = cast(str, cast(etree._Element, container.find(".//c:rootfile", NS)).get("full-path"))
     opf = parse_xml(zf.read(opf_path))
     base = posixpath.dirname(opf_path)
 
     def resolve(href: str) -> str:  # hrefs are URLs: "ch%201.xhtml" is the ZIP entry "ch 1.xhtml"
         return posixpath.normpath(posixpath.join(base, unquote(href.split("#", maxsplit=1)[0])))
 
-    items = {}
+    items: dict[str | None, etree._Element] = {}
     nav_path = ncx_path = None
     for item in opf.iterfind(".//opf:manifest/opf:item", NS):
         items[item.get("id")] = item
         if "nav" in (item.get("properties") or "").split():
-            nav_path = resolve(item.get("href"))
+            nav_path = resolve(cast(str, item.get("href")))
         if item.get("media-type") == "application/x-dtbncx+xml":
-            ncx_path = resolve(item.get("href"))
+            ncx_path = resolve(cast(str, item.get("href")))
 
     spine = []
     for ref in opf.iterfind(".//opf:spine/opf:itemref", NS):
-        item = items.get(ref.get("idref"))
-        if item is None or item.get("media-type") not in XHTML_TYPES:
+        spine_item = items.get(ref.get("idref"))
+        if spine_item is None or spine_item.get("media-type") not in XHTML_TYPES:
             continue
-        path = resolve(item.get("href"))
+        path = resolve(cast(str, spine_item.get("href")))
         if path != nav_path:  # the TOC is translated separately as labels
             spine.append(path)
     return Book(opf_path, spine, nav_path, ncx_path)

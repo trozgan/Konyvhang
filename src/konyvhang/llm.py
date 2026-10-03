@@ -48,7 +48,7 @@ class UsageLimitError(LLMError):
 @dataclass
 class Result:
     text: str
-    usage: dict = field(default_factory=dict)
+    usage: dict[str, Any] = field(default_factory=dict)
 
 
 Caller = Callable[[str, str, str | None], Result]
@@ -77,13 +77,13 @@ def check_ready(provider: str) -> None:
         raise LLMError(f"Hiányzik a(z) {API_KEYS[provider]} környezeti változó.")
 
 
-def parse_json(text: str, opener: str):
+def parse_json(text: str, opener: str) -> Any:  # noqa: ANN401 - whatever JSON value the text holds
     """The first complete JSON value starting with `opener` ("[" or "{"); text around it is ignored."""
     return json.JSONDecoder().raw_decode(text[text.index(opener) :])[0]
 
 
 # subscriptions through the CLIs ----------------------------------------------
-def _run(cmd: list[str], stdin: str) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], stdin: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             cmd, input=stdin, capture_output=True, text=True, encoding="utf-8", timeout=TIMEOUT, check=False
