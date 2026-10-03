@@ -1,13 +1,15 @@
-"""Translate the sample book with several models and record time, tokens and price.
+"""Translate a sample book with several models and record time, tokens and price.
 
     uv run scripts/benchmark.py translate openrouter:anthropic/claude-opus-5.5 claude:opus ...
     uv run scripts/benchmark.py judge      # blind quality scores from two judges
     uv run scripts/benchmark.py report     # Markdown table for the README
 
-Every model runs the whole pipeline (glossary, translation, TOC labels) in its own
-work folder under bench/, in parallel. Results go to bench/results.json.
+--profile nonfiction (before the command) measures the non-fiction sample instead of the
+fiction one. Every model runs the whole pipeline (glossary, translation, TOC labels) in its
+own work folder under bench/<profile>/, in parallel. Results go to bench/<profile>/results.json.
 """
 
+import argparse
 import json
 import os
 import random
@@ -16,18 +18,73 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
-BENCH = ROOT / "bench"
-SAMPLE = ROOT / "samples" / "gift-of-the-magi.epub"
-RESULTS = BENCH / "results.json"
 sys.path.insert(0, str(ROOT / "src"))
 
 from konyvhang import llm  # noqa: E402
 from konyvhang.segment import plain_text  # noqa: E402
 from konyvhang.workdir import WorkDir  # noqa: E402
+
+JUDGE_FORMAT = """Légy szigorú és következetes: 10 csak kiadható, kiváló fordítás, 5 érthető, de sok hibával.
+Csak egy JSON-objektumot adj vissza, kulcsa a fordítás betűjele:
+{{"A": {{{example}, "megjegyzes": "egy mondat"}}, ...}}"""
+
+JUDGE_FICTION = """Irodalmi fordítások értékelője vagy. Egy angol novella részletét és annak több névtelen magyar
+fordítását kapod. Mindegyik fordítást önállóan pontozd 1-től 10-ig, négy szempont szerint:
+
+- pontosság: a jelentés hiánytalan és helyes, nincs kihagyás vagy félrefordítás;
+- gördülékenység: természetes, magyaros, nem fordításízű szöveg;
+- stílus: a szerző hangja, iróniája, szójátékai, a párbeszédek magyar írásmódja (gondolatjel);
+- egységesség: nevek, megszólítás (tegezés/magázás), visszatérő kifejezések következetesek.
+"""
+
+JUDGE_NONFICTION = """Ismeretterjesztő szövegek fordításainak értékelője vagy. Egy angol tudományos előadás részletét
+és annak több névtelen magyar fordítását kapod, lábjegyzetekkel együtt. Mindegyik fordítást önállóan
+pontozd 1-től 10-ig, négy szempont szerint:
+
+- pontosság: a jelentés hiánytalan és helyes; számok, mértékek, nevek, címek és hivatkozások nem
+  változnak, nincs kihagyás vagy félrefordítás;
+- gördülékenység: természetes, magyaros, nem fordításízű szöveg, amely megtartja az előadás élőszó-jellegét;
+- szakszavak: a szakkifejezések a magyar szakirodalomban használt alakjukban szerepelnek, a latin
+  tudományos nevek megmaradnak, a magyarázatok szakmailag helyesek;
+- egységesség: ugyanaz a fogalom végig ugyanazzal a szóval szerepel, a hallgatóság megszólítása következetes.
+"""
+
+
+@dataclass(frozen=True)
+class Profile:
+    sample: Path
+    judge_system: str
+    criteria: tuple[str, ...]
+
+
+PROFILES = {
+    "fiction": Profile(
+        ROOT / "samples" / "gift-of-the-magi.epub",
+        JUDGE_FICTION,
+        ("pontossag", "gordulekenyseg", "stilus", "egysegesseg"),
+    ),
+    "nonfiction": Profile(
+        ROOT / "samples" / "on-a-piece-of-chalk.epub",
+        JUDGE_NONFICTION,
+        ("pontossag", "gordulekenyseg", "szakszavak", "egysegesseg"),
+    ),
+}
+PROFILE = "fiction"  # set from --profile before any command runs
+
+
+def bench() -> Path:
+    return ROOT / "bench" / PROFILE
+
+
+def judge_system() -> str:
+    criteria = PROFILES[PROFILE].criteria
+    example = ", ".join(f'"{key}": {score}' for key, score in zip(criteria, (9, 8, 8, 9), strict=True))
+    return PROFILES[PROFILE].judge_system + "\n" + JUDGE_FORMAT.format(example=example)
 
 
 def slug(spec: str) -> str:
@@ -35,39 +92,40 @@ def slug(spec: str) -> str:
 
 
 def load() -> dict[str, Any]:
-    return json.loads(RESULTS.read_text(encoding="utf-8")) if RESULTS.exists() else {}
+    results = bench() / "results.json"
+    return json.loads(results.read_text(encoding="utf-8")) if results.exists() else {}
 
 
 def save(results: dict[str, Any]) -> None:
-    BENCH.mkdir(exist_ok=True)
-    RESULTS.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
+    bench().mkdir(parents=True, exist_ok=True)
+    (bench() / "results.json").write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def translate_one(spec: str) -> dict[str, Any]:
     provider, _, model = spec.partition(":")
     book = slug(spec)
-    log = BENCH / f"{book}.log"
+    log = bench() / f"{book}.log"
     cmd = [
         "uv",
         "run",
         "konyvhang",
         "run",
-        str(SAMPLE),
+        str(PROFILES[PROFILE].sample),
         "--id",
         book,
         "--profile",
-        "fiction",
+        PROFILE,
         "--provider",
         provider,
         "--yes",
         "--no-audio",
     ] + (["--model", model] if model else [])
-    env = {**os.environ, "KONYVHANG_WORK": str(BENCH / "work")}
+    env = {**os.environ, "KONYVHANG_WORK": str(bench() / "work")}
     start = time.time()
     with log.open("w", encoding="utf-8") as out:
         code = subprocess.run(cmd, cwd=ROOT, env=env, stdout=out, stderr=subprocess.STDOUT, check=False).returncode
     seconds = time.time() - start
-    wd = WorkDir(BENCH / "work" / book)
+    wd = WorkDir(bench() / "work" / book)
     usage = wd.load_state().get("usage", {}) if wd.exists() else {}
     chunks = wd.load_chunks() if wd.exists() else []
     text = log.read_text(encoding="utf-8")
@@ -87,7 +145,7 @@ def translate_one(spec: str) -> dict[str, Any]:
 
 
 def cmd_translate(specs: list[str]) -> None:
-    BENCH.mkdir(exist_ok=True)
+    bench().mkdir(parents=True, exist_ok=True)
     results = load()
     with ThreadPoolExecutor(max_workers=len(specs)) as pool:
         for spec, result in zip(specs, pool.map(translate_one, specs), strict=True):
@@ -100,21 +158,8 @@ def cmd_translate(specs: list[str]) -> None:
             )
 
 
-JUDGE_SYSTEM = """Irodalmi fordítások értékelője vagy. Egy angol novella részletét és annak több névtelen magyar
-fordítását kapod. Mindegyik fordítást önállóan pontozd 1-től 10-ig, négy szempont szerint:
-
-- pontosság: a jelentés hiánytalan és helyes, nincs kihagyás vagy félrefordítás;
-- gördülékenység: természetes, magyaros, nem fordításízű szöveg;
-- stílus: a szerző hangja, iróniája, szójátékai, a párbeszédek magyar írásmódja (gondolatjel);
-- egységesség: nevek, megszólítás (tegezés/magázás), visszatérő kifejezések következetesek.
-
-Légy szigorú és következetes: 10 csak kiadható, kiváló fordítás, 5 érthető, de sok hibával.
-Csak egy JSON-objektumot adj vissza, kulcsa a fordítás betűjele:
-{"A": {"pontossag": 9, "gordulekenyseg": 8, "stilus": 8, "egysegesseg": 9, "megjegyzes": "egy mondat"}, ...}"""
-
-
 def translation_text(book: str) -> str:
-    wd = WorkDir(BENCH / "work" / book)
+    wd = WorkDir(bench() / "work" / book)
     return "\n\n".join(plain_text(m) for c in wd.load_chunks() for m in c["translation"])
 
 
@@ -124,7 +169,7 @@ def cmd_judge(judges: list[str]) -> None:
     done = [s for s, r in results.items() if r.get("ok")]
     source = "\n\n".join(
         plain_text(s["src"])
-        for c in WorkDir(BENCH / "work" / results[done[0]]["book"]).load_chunks()
+        for c in WorkDir(bench() / "work" / results[done[0]]["book"]).load_chunks()
         for s in c["segments"]
     )
     for judge in judges:
@@ -137,7 +182,7 @@ def cmd_judge(judges: list[str]) -> None:
             for letter, spec in letters.items()
         )
         print(f"Bírálat: {judge} ({len(letters)} fordítás)", flush=True)
-        answer = llm.parse_json(llm.caller(provider)(prompt, JUDGE_SYSTEM, model or None).text, "{")
+        answer = llm.parse_json(llm.caller(provider)(prompt, judge_system(), model or None).text, "{")
         for letter, spec in letters.items():
             scores = answer.get(letter, {})
             results[spec].setdefault("judges", {})[judge] = scores
@@ -152,11 +197,11 @@ def cmd_report() -> None:
     results = load()
     words = sum(
         len(plain_text(s["src"]).split())
-        for c in WorkDir(BENCH / "work" / next(iter(results.values()))["book"]).load_chunks()
+        for c in WorkDir(bench() / "work" / next(iter(results.values()))["book"]).load_chunks()
         for s in c["segments"]
     )
     pages = words / PAGE_WORDS
-    keys = ("pontossag", "gordulekenyseg", "stilus", "egysegesseg")
+    keys = PROFILES[PROFILE].criteria
     rows = []
     for spec, r in results.items():
         judged = [j for j in r.get("judges", {}).values() if j]
@@ -179,9 +224,14 @@ def cmd_report() -> None:
 
 
 if __name__ == "__main__":
-    command, *rest = sys.argv[1:] or ["report"]
+    parser = argparse.ArgumentParser(description="Modellek összemérése a mintakönyvön.")
+    parser.add_argument("--profile", choices=sorted(PROFILES), default="fiction")
+    parser.add_argument("command", nargs="?", choices=["translate", "judge", "report"], default="report")
+    parser.add_argument("specs", nargs="*", help="szolgáltató:modell, például openrouter:openai/gpt-6-sol")
+    args = parser.parse_args()
+    PROFILE = args.profile
     {
-        "translate": lambda: cmd_translate(rest),
-        "judge": lambda: cmd_judge(rest or ["claude:opus", "codex:"]),
+        "translate": lambda: cmd_translate(args.specs),
+        "judge": lambda: cmd_judge(args.specs or ["claude:opus", "codex:"]),
         "report": cmd_report,
-    }[command]()
+    }[args.command]()
