@@ -1,4 +1,5 @@
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -63,7 +64,7 @@ CH2 = """<?xml version="1.0" encoding="utf-8"?>
 <body><section><h2>Chapter Two</h2><ul><li>First item</li><li>Second <strong>item</strong></li></ul></section></body></html>"""
 
 
-def make_epub(path):
+def make_epub(path: Path) -> Path:
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
         zf.writestr("META-INF/container.xml", CONTAINER, compress_type=zipfile.ZIP_DEFLATED)
@@ -78,5 +79,5 @@ def make_epub(path):
 
 
 @pytest.fixture
-def epub_file(tmp_path):
+def epub_file(tmp_path: Path) -> Path:
     return make_epub(tmp_path / "book.epub")

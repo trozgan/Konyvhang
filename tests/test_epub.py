@@ -1,9 +1,10 @@
 import zipfile
+from pathlib import Path
 
 from konyvhang import epub
 
 
-def test_read_book_spine_skips_nav(epub_file):
+def test_read_book_spine_skips_nav(epub_file: Path) -> None:
     with zipfile.ZipFile(epub_file) as zf:
         book = epub.read_book(zf)
     assert book.opf_path == "OEBPS/content.opf"
@@ -12,7 +13,7 @@ def test_read_book_spine_skips_nav(epub_file):
     assert book.ncx_path == "OEBPS/toc.ncx"
 
 
-def test_roundtrip_without_changes_is_byte_identical(epub_file, tmp_path):
+def test_roundtrip_without_changes_is_byte_identical(epub_file: Path, tmp_path: Path) -> None:
     out = tmp_path / "out.epub"
     epub.write_epub(str(epub_file), str(out), {})
     with zipfile.ZipFile(epub_file) as a, zipfile.ZipFile(out) as b:
@@ -23,6 +24,6 @@ def test_roundtrip_without_changes_is_byte_identical(epub_file, tmp_path):
             assert a.read(name) == b.read(name)
 
 
-def test_parse_xml_handles_html_entities():
+def test_parse_xml_handles_html_entities() -> None:
     tree = epub.parse_xml(b'<p xmlns="http://www.w3.org/1999/xhtml">a&nbsp;b &amp; c&mdash;d</p>')
     assert tree.getroot().text == "a b & c—d"

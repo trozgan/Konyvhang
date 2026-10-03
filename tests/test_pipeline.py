@@ -3,6 +3,8 @@
 import json
 import re
 import zipfile
+from collections.abc import Sequence
+from pathlib import Path
 
 import pytest
 
@@ -24,11 +26,11 @@ def fake_labels(prompt: str) -> str:
 
 
 class FakeClaude:
-    def __init__(self, script=()):
+    def __init__(self, script: Sequence[str] = ()) -> None:
         self.script = list(script)  # per call: "ok", "bad" or "limit"
         self.calls = 0
 
-    def __call__(self, prompt, system, model):
+    def __call__(self, prompt: str, system: str, model: str | None) -> llm.Result:
         self.calls += 1
         action = self.script.pop(0) if self.script else "ok"
         if action == "limit":
@@ -40,7 +42,7 @@ class FakeClaude:
 
 
 @pytest.fixture
-def wd(epub_file, tmp_path, monkeypatch):
+def wd(epub_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> WorkDir:
     monkeypatch.setattr("konyvhang.workdir.MAX_WORDS", 30)  # ch1 and ch2 become separate chunks
     wd = WorkDir(tmp_path / "work" / "book")
     wd.root.mkdir(parents=True)
@@ -50,12 +52,12 @@ def wd(epub_file, tmp_path, monkeypatch):
     return wd
 
 
-def test_chunks(wd):
+def test_chunks(wd: WorkDir) -> None:
     chunks = wd.load_chunks()
     assert [len(c["segments"]) for c in chunks] == [5, 3]
 
 
-def test_full_run_and_build(wd):
+def test_full_run_and_build(wd: WorkDir) -> None:
     fake = FakeClaude()
     assert translate.run(wd, call=fake, log=lambda m: None)
     assert fake.calls == 3  # two chunks + labels
@@ -79,21 +81,21 @@ def test_full_run_and_build(wd):
     assert "<text>HU Chapter One</text>" in ncx
 
 
-def test_bad_response_is_retried(wd):
+def test_bad_response_is_retried(wd: WorkDir) -> None:
     fake = FakeClaude(["bad", "ok"])
     translate.run(wd, call=fake, max_chunks=1, log=lambda m: None)
     assert fake.calls == 2
     assert wd.load_chunks()[0]["translation"] is not None
 
 
-def test_repeated_bad_response_splits_chunk(wd):
+def test_repeated_bad_response_splits_chunk(wd: WorkDir) -> None:
     fake = FakeClaude(["bad", "bad"])
     translate.run(wd, call=fake, max_chunks=1, log=lambda m: None)
     assert fake.calls == 4  # two failures, then the two halves
     assert len(wd.load_chunks()[0]["translation"]) == 5
 
 
-def test_usage_limit_stops_and_resumes(wd):
+def test_usage_limit_stops_and_resumes(wd: WorkDir) -> None:
     first = FakeClaude(["ok", "limit"])
     assert not translate.run(wd, call=first, log=lambda m: None)
     chunks = wd.load_chunks()
@@ -105,14 +107,14 @@ def test_usage_limit_stops_and_resumes(wd):
     assert wd.load_state()["usage"]["calls"] == 3
 
 
-def test_build_refuses_unfinished_without_partial(wd):
+def test_build_refuses_unfinished_without_partial(wd: WorkDir) -> None:
     translate.run(wd, call=FakeClaude(), max_chunks=1, log=lambda m: None)
     with pytest.raises(SystemExit):
         build.build(wd, log=lambda m: None)
     build.build(wd, partial=True, log=lambda m: None)
 
 
-def test_reference_matter_is_not_chunked_unless_asked(tmp_path):
+def test_reference_matter_is_not_chunked_unless_asked(tmp_path: Path) -> None:
     from conftest import CH1, make_epub
 
     from konyvhang.workdir import build_chunks
@@ -131,7 +133,7 @@ def test_reference_matter_is_not_chunked_unless_asked(tmp_path):
         for n, data in files.items():
             zf.writestr(n, data)
 
-    def texts(references):
+    def texts(references: bool) -> list[str]:
         return [s["src"] for c in build_chunks(path, references) for s in c["segments"]]
 
     assert not any("Smith" in t or "References" in t for t in texts(False))

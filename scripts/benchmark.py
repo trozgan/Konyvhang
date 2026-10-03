@@ -17,6 +17,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent.parent
 BENCH = ROOT / "bench"
@@ -33,16 +34,16 @@ def slug(spec: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", spec.lower()).strip("-")
 
 
-def load() -> dict:
+def load() -> dict[str, Any]:
     return json.loads(RESULTS.read_text(encoding="utf-8")) if RESULTS.exists() else {}
 
 
-def save(results: dict) -> None:
+def save(results: dict[str, Any]) -> None:
     BENCH.mkdir(exist_ok=True)
     RESULTS.write_text(json.dumps(results, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
-def translate_one(spec: str) -> dict:
+def translate_one(spec: str) -> dict[str, Any]:
     provider, _, model = spec.partition(":")
     book = slug(spec)
     log = BENCH / f"{book}.log"
@@ -129,7 +130,7 @@ def cmd_judge(judges: list[str]) -> None:
     for judge in judges:
         provider, _, model = judge.partition(":")
         order = done[:]
-        random.Random(judge).shuffle(order)
+        random.Random(judge).shuffle(order)  # noqa: S311 - a repeatable blind order, not a secret
         letters = {chr(65 + i): spec for i, spec in enumerate(order)}
         prompt = f"<eredeti>\n{source}\n</eredeti>\n\n" + "\n\n".join(
             f'<forditas betu="{letter}">\n{translation_text(results[spec]["book"])}\n</forditas>'

@@ -1,5 +1,7 @@
 """Glossary building with a fake model: slicing, caching, the JSON retry."""
 
+from pathlib import Path
+
 import pytest
 
 from konyvhang import glossary, llm
@@ -7,7 +9,7 @@ from konyvhang.workdir import WorkDir
 
 
 @pytest.fixture
-def wd(epub_file, tmp_path):
+def wd(epub_file: Path, tmp_path: Path) -> WorkDir:
     wd = WorkDir(tmp_path / "work" / "book")
     wd.root.mkdir(parents=True)
     wd.source.write_bytes(epub_file.read_bytes())
@@ -19,11 +21,11 @@ def wd(epub_file, tmp_path):
 class FakeModel:
     """Answers extraction with one term per slice and the merge with a glossary."""
 
-    def __init__(self, bad=0):
+    def __init__(self, bad: int = 0) -> None:
         self.bad = bad  # this many unparsable answers first
-        self.prompts = []
+        self.prompts: list[str] = []
 
-    def __call__(self, prompt, system, model):
+    def __call__(self, prompt: str, system: str, model: str | None) -> llm.Result:
         self.prompts.append(prompt)
         if self.bad:
             self.bad -= 1
@@ -33,7 +35,7 @@ class FakeModel:
         return llm.Result('{"style_notes": "plain", "terms": []}', {"output_tokens": 2})
 
 
-def test_slices_split_on_word_count(wd, monkeypatch):
+def test_slices_split_on_word_count(wd: WorkDir, monkeypatch: pytest.MonkeyPatch) -> None:
     assert len(glossary.slices(wd)) == 1
     monkeypatch.setattr(glossary, "SLICE_WORDS", 20)
     parts = glossary.slices(wd)
@@ -43,10 +45,10 @@ def test_slices_split_on_word_count(wd, monkeypatch):
     assert len(glossary.slices(wd)) == sum(len(c["segments"]) for c in wd.load_chunks())
 
 
-def test_build_extracts_merges_and_caches_parts(wd, monkeypatch):
+def test_build_extracts_merges_and_caches_parts(wd: WorkDir, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(glossary, "SLICE_WORDS", 20)
     fake = FakeModel()
-    logs = []
+    logs: list[str] = []
     glossary.build(wd, call=fake, log=logs.append)
 
     slices = len(glossary.slices(wd))
@@ -63,14 +65,14 @@ def test_build_extracts_merges_and_caches_parts(wd, monkeypatch):
     assert len(again.prompts) == 1  # extraction came from the cache, only the merge ran
 
 
-def test_build_uses_the_books_provider(wd, monkeypatch):
+def test_build_uses_the_books_provider(wd: WorkDir, monkeypatch: pytest.MonkeyPatch) -> None:
     fake = FakeModel()
     monkeypatch.setattr(llm, "caller", lambda provider: fake)
     glossary.build(wd, log=lambda m: None)
     assert fake.prompts
 
 
-def test_call_json_retries_once_then_gives_up(wd):
+def test_call_json_retries_once_then_gives_up(wd: WorkDir) -> None:
     fake = FakeModel(bad=1)
     assert glossary.call_json(fake, wd, "<book_slice>x</book_slice>", "sys", "opus") == {
         "terms": [{"source": "slice2"}]
@@ -79,5 +81,5 @@ def test_call_json_retries_once_then_gives_up(wd):
         glossary.call_json(FakeModel(bad=2), wd, "prompt", "sys", "opus")
 
 
-def test_parse_json_object_ignores_surrounding_text():
+def test_parse_json_object_ignores_surrounding_text() -> None:
     assert glossary.parse_json_object('Itt van:\n{"a": [1]}\nKész.') == {"a": [1]}

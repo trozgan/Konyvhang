@@ -4,6 +4,7 @@ import json
 import re
 import subprocess
 import zipfile
+from pathlib import Path
 
 import pytest
 from conftest import make_epub
@@ -20,7 +21,7 @@ def echo(prompt: str) -> str:
     return "\n".join(f'<seg id="{i}">HU {b}</seg>' for i, b in re.findall(r'<seg id="(\d+)">(.*?)</seg>', source))
 
 
-def make_wd(tmp_path, epub_path, **state) -> WorkDir:
+def make_wd(tmp_path: Path, epub_path: Path, **state: str) -> WorkDir:
     wd = WorkDir(tmp_path / "work" / "book")
     wd.root.mkdir(parents=True)
     wd.source.write_bytes(epub_path.read_bytes())
@@ -29,7 +30,7 @@ def make_wd(tmp_path, epub_path, **state) -> WorkDir:
     return wd
 
 
-def rewrite(path, changes: dict[str, str]) -> None:
+def rewrite(path: Path, changes: dict[str, str]) -> None:
     with zipfile.ZipFile(path) as zf:
         files = {n: zf.read(n) for n in zf.namelist()}
     files.update({n: d.encode("utf-8") for n, d in changes.items()})
@@ -39,11 +40,11 @@ def rewrite(path, changes: dict[str, str]) -> None:
 
 
 # segment ------------------------------------------------------------------
-def test_document_without_body_has_no_segments():
+def test_document_without_body_has_no_segments() -> None:
     assert segment.find_segments(etree.ElementTree(etree.fromstring(f'<html xmlns="{XHTML}"/>'))) == []
 
 
-def test_comments_inside_a_segment_are_skipped():
+def test_comments_inside_a_segment_are_skipped() -> None:
     tree = etree.ElementTree(
         etree.fromstring(f'<html xmlns="{XHTML}"><body><p>A <!-- x --><em>b</em></p></body></html>')
     )
@@ -53,7 +54,7 @@ def test_comments_inside_a_segment_are_skipped():
 
 
 # epub ---------------------------------------------------------------------
-def test_spine_skips_non_xhtml_and_unknown_items(epub_file):
+def test_spine_skips_non_xhtml_and_unknown_items(epub_file: Path) -> None:
     with zipfile.ZipFile(epub_file) as zf:
         opf = zf.read("OEBPS/content.opf").decode("utf-8")
     opf = opf.replace('<itemref idref="ch2"/>', '<itemref idref="ch2"/><itemref idref="css"/><itemref idref="ghost"/>')
@@ -63,7 +64,7 @@ def test_spine_skips_non_xhtml_and_unknown_items(epub_file):
 
 
 # validate -----------------------------------------------------------------
-def test_duplicate_and_extra_segments_are_reported():
+def test_duplicate_and_extra_segments_are_reported() -> None:
     with pytest.raises(validate.ValidationError, match="többször"):
         validate.parse_segments('<seg id="1">a</seg><seg id="1">b</seg>')
     with pytest.raises(validate.ValidationError, match="Fölösleges szegmensek: 2"):
@@ -71,7 +72,7 @@ def test_duplicate_and_extra_segments_are_reported():
 
 
 # workdir ------------------------------------------------------------------
-def test_workdir_exists_and_glossary_roundtrip(tmp_path):
+def test_workdir_exists_and_glossary_roundtrip(tmp_path: Path) -> None:
     wd = WorkDir(tmp_path / "b")
     assert not wd.exists()
     wd.root.mkdir()
@@ -79,7 +80,7 @@ def test_workdir_exists_and_glossary_roundtrip(tmp_path):
     assert "bölcsek" in wd.glossary_text()
 
 
-def test_chunking_skips_empty_files_and_splits_long_ones(epub_file, monkeypatch):
+def test_chunking_skips_empty_files_and_splits_long_ones(epub_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     empty = f'<html xmlns="{XHTML}"><body><p>* * *</p></body></html>'
     rewrite(epub_file, {"OEBPS/text/ch2.xhtml": empty})
     monkeypatch.setattr("konyvhang.workdir.MAX_WORDS", 10)
@@ -90,12 +91,12 @@ def test_chunking_skips_empty_files_and_splits_long_ones(epub_file, monkeypatch)
     assert all(len(c["segments"]) for c in chunks)
 
 
-def test_split_ends_with_a_closed_part():
+def test_split_ends_with_a_closed_part() -> None:
     segs = [{"src": "a " * 10}, {"src": "b " * 9000}]
     assert [len(p) for p in split_by_words(segs)] == [2]
 
 
-def test_split_by_words_keeps_the_tail(monkeypatch):
+def test_split_by_words_keeps_the_tail(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("konyvhang.workdir.MAX_WORDS", 10)
     segs = [{"src": "w " * 6} for _ in range(5)]
     parts = split_by_words(segs)
@@ -103,14 +104,18 @@ def test_split_by_words_keeps_the_tail(monkeypatch):
 
 
 # translate ----------------------------------------------------------------
-def test_run_without_caller_uses_the_book_provider(epub_file, tmp_path, monkeypatch):
+def test_run_without_caller_uses_the_book_provider(
+    epub_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     wd = make_wd(tmp_path, epub_file, provider="codex")
-    used = []
+    used: list[str | None] = []
 
-    def fake(prompt, system, model):
+    def fake(prompt: str, system: str, model: str | None) -> llm.Result:
         used.append(model)
         if "<labels>" in prompt:
-            return llm.Result(json.dumps(["HU"] * len(json.loads(prompt.split("<labels>")[1].split("</labels>")[0]))))
+            return llm.Result(
+                json.dumps(["HU"] * len(json.loads(prompt.split("<labels>")[1].split("</labels>", maxsplit=1)[0])))
+            )
         return llm.Result(echo(prompt))
 
     monkeypatch.setattr(llm, "caller", lambda provider: fake if provider == "codex" else None)
@@ -121,14 +126,16 @@ def test_run_without_caller_uses_the_book_provider(epub_file, tmp_path, monkeypa
     assert used == []
 
 
-def test_single_segment_that_never_validates_raises(epub_file, tmp_path):
+def test_single_segment_that_never_validates_raises(epub_file: Path, tmp_path: Path) -> None:
     wd = make_wd(tmp_path, epub_file)
     seg = wd.load_chunks()[0]["segments"][:1]
     with pytest.raises(validate.ValidationError, match="Egyetlen szegmens"):
         translate.translate_segments(wd, seg, [], lambda p, s, m: llm.Result("nope"), lambda m: None)
 
 
-def test_book_without_labels_writes_empty_labels(epub_file, tmp_path, monkeypatch):
+def test_book_without_labels_writes_empty_labels(
+    epub_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     wd = make_wd(tmp_path, epub_file)
     monkeypatch.setattr(translate, "collect_labels", lambda wd: [])
     translate.translate_labels(wd, lambda *a: pytest.fail("no call expected"), lambda m: None)
@@ -144,11 +151,13 @@ def test_book_without_labels_writes_empty_labels(epub_file, tmp_path, monkeypatc
         ('["csak egy"]', "száma eltér"),
     ],
 )
-def test_label_failures_keep_the_originals(epub_file, tmp_path, answer, message):
+def test_label_failures_keep_the_originals(
+    epub_file: Path, tmp_path: Path, answer: str | Exception, message: str
+) -> None:
     wd = make_wd(tmp_path, epub_file)
-    logs = []
+    logs: list[str] = []
 
-    def call(prompt, system, model):
+    def call(prompt: str, system: str, model: str | None) -> llm.Result:
         if isinstance(answer, Exception):
             raise answer
         return llm.Result(answer)
@@ -159,14 +168,14 @@ def test_label_failures_keep_the_originals(epub_file, tmp_path, answer, message)
 
 
 # build ----------------------------------------------------------------------
-def test_labels_without_nav_and_ncx(epub_file):
+def test_labels_without_nav_and_ncx(epub_file: Path) -> None:
     with zipfile.ZipFile(epub_file) as zf:
         book = epub.read_book(zf)
         book.nav_path = book.ncx_path = None
         assert list(build.label_elements(zf, book)) == ["OEBPS/content.opf"]
 
 
-def test_set_lang_on_non_html_root_and_nested_lang():
+def test_set_lang_on_non_html_root_and_nested_lang() -> None:
     tree = etree.ElementTree(etree.fromstring('<ncx><p lang="en"><b>x</b></p></ncx>'))
     build.set_lang(tree)
     root = tree.getroot()
@@ -175,13 +184,16 @@ def test_set_lang_on_non_html_root_and_nested_lang():
 
 
 @pytest.mark.parametrize(("stdout", "stderr", "expected"), [("a\nNo errors", "", "No errors"), ("", "oops", "oops")])
-def test_build_runs_epubcheck_when_installed(tmp_path, monkeypatch, stdout, stderr, expected):
+def test_build_runs_epubcheck_when_installed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, stderr: str, expected: str
+) -> None:
     src = make_epub(tmp_path / "b.epub")
     wd = make_wd(tmp_path, src)
-    monkeypatch.setattr(build.shutil, "which", lambda name: "/bin/epubcheck")
+    monkeypatch.setattr("konyvhang.build.shutil.which", lambda name: "/bin/epubcheck")
     monkeypatch.setattr(
-        build.subprocess, "run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr=stderr)
+        "konyvhang.build.subprocess.run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, stdout=stdout, stderr=stderr),
     )
-    logs = []
+    logs: list[str] = []
     build.build(wd, partial=True, log=logs.append)
     assert logs[-1] == expected

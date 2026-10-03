@@ -1,6 +1,8 @@
 import json
 import subprocess
 import zipfile
+from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -9,12 +11,12 @@ from konyvhang import audio
 from konyvhang.workdir import WorkDir
 
 
-def test_speech_text_drops_footnote_markers_and_keeps_line_breaks():
+def test_speech_text_drops_footnote_markers_and_keeps_line_breaks() -> None:
     markup = 'Családunknak<br n="1"/>szeretettel, <a n="2"><sup n="3">1</sup></a>mondta.'
     assert audio.speech_text(markup) == "Családunknak szeretettel, mondta."
 
 
-def test_split_long_at_sentence_ends():
+def test_split_long_at_sentence_ends() -> None:
     text = " ".join(["Ez egy mondat, amely elég hosszú ahhoz, hogy számítson."] * 20)
     pieces = audio.split_long(text)
     assert len(pieces) > 1
@@ -22,40 +24,40 @@ def test_split_long_at_sentence_ends():
     assert " ".join(pieces) == text
 
 
-def test_similarity_ignores_case_punctuation_and_digits():
+def test_similarity_ignores_case_punctuation_and_digits() -> None:
     assert audio.similarity("– Megveszi a hajamat? – kérdezte.", "Megveszi a hajamat, kérdezte") == 1.0
     assert audio.similarity("Huszonöt év", "25 év") < 1.0
     assert audio.similarity("Egy teljesen más mondat.", "Semmi köze hozzá") < audio.MIN_SIMILARITY
 
 
-def test_follow_waits_for_new_chunks_and_stops_when_book_is_done(monkeypatch):
+def test_follow_waits_for_new_chunks_and_stops_when_book_is_done(monkeypatch: pytest.MonkeyPatch) -> None:
     states = iter([[1, 0, 0], [1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 1, 1]])
     current = {"chunks": [1, 0, 0]}
 
     class FakeWorkDir:
-        def load_chunks(self):
+        def load_chunks(self) -> list[dict[str, Any]]:
             return [{"translation": [] if t else None} for t in current["chunks"]]
 
-        def chunk_paths(self):
+        def chunk_paths(self) -> list[int]:
             return current["chunks"]
 
-    def fake_sleep(_):
+    def fake_sleep(_: float) -> None:
         current["chunks"] = next(states)
 
-    passes = []
+    passes: list[list[int]] = []
     monkeypatch.setattr(audio, "run", lambda wd, voice, skip, log: passes.append(list(current["chunks"])))
-    monkeypatch.setattr(audio.time, "sleep", fake_sleep)
-    audio.follow(FakeWorkDir(), None, [], log=lambda m: None)
+    monkeypatch.setattr("konyvhang.audio.time.sleep", fake_sleep)
+    audio.follow(cast(WorkDir, FakeWorkDir()), Path("voice"), [], log=lambda m: None)
     assert passes == [[1, 0, 0], [1, 1, 0], [1, 1, 1]]
 
 
-def test_similarity_handles_long_texts_with_spelling_variants():
+def test_similarity_handles_long_texts_with_spelling_variants() -> None:
     text = "Ebből a nézőpontból Bertha néni gondolatai és tettei ugyanolyan észszerűek. " * 4
     heard = text.replace("Bertha", "Berta")
     assert audio.similarity(text, heard) > 0.95
 
 
-def test_add_pieces_uses_spoken_form_before_splitting():
+def test_add_pieces_uses_spoken_form_before_splitting() -> None:
     book = [{"segments": [{"text": "A 2. fejezet.", "heading": False}, {"text": "Cím", "heading": True}]}]
     audio.add_pieces(book, {"A 2. fejezet.": "A második fejezet."})
     assert book[0]["pieces"] == [
@@ -91,7 +93,7 @@ FILES = {
 
 
 @pytest.fixture
-def book_wd(tmp_path):
+def book_wd(tmp_path: Path) -> WorkDir:
     src = tmp_path / "b.epub"
     with zipfile.ZipFile(src, "w") as zf:
         zf.writestr("mimetype", "application/epub+zip")
@@ -120,7 +122,7 @@ def book_wd(tmp_path):
     return wd
 
 
-def test_chapters_skip_landmarks_and_read_footnotes_inline(book_wd):
+def test_chapters_skip_landmarks_and_read_footnotes_inline(book_wd: WorkDir) -> None:
     book = audio.chapters(book_wd, [])
     assert [c["file"] for c in book] == ["OEBPS/ch1.xhtml"]
     assert [s["text"] for s in book[0]["segments"]] == [
@@ -132,7 +134,7 @@ def test_chapters_skip_landmarks_and_read_footnotes_inline(book_wd):
     assert book[0]["segments"][0]["heading"]
 
 
-def test_m4b_has_metadata_chapters_and_cover(book_wd):
+def test_m4b_has_metadata_chapters_and_cover(book_wd: WorkDir) -> None:
     book = audio.chapters(book_wd, [])
     audio.add_pieces(book, {})
     pieces_dir = book_wd.root / "audio" / "pieces"
@@ -168,50 +170,52 @@ def test_m4b_has_metadata_chapters_and_cover(book_wd):
     assert [c["tags"]["title"] for c in probe["chapters"]] == ["Első fejezet"]
 
 
-def test_run_batches_retries_bad_takes_and_resumes(book_wd, monkeypatch):
+def test_run_batches_retries_bad_takes_and_resumes(book_wd: WorkDir, monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeNarrator:
         """Each take's first sample identifies its text; the batch take of "Second paragraph." is garbled."""
 
-        def __init__(self):
-            self.batches, self.singles, self.takes = [], [], []
+        def __init__(self) -> None:
+            self.batches: list[list[str]] = []
+            self.singles: list[str] = []
+            self.takes: list[str] = []
 
-        def take(self, text, garbled):
+        def take(self, text: str, garbled: bool) -> np.ndarray:
             self.takes.append("valami más" if garbled else text)
             return np.full(240, len(self.takes) / 32767, dtype=np.float32)
 
-        def speak_batch(self, texts, seed):
+        def speak_batch(self, texts: list[str], seed: int) -> list[np.ndarray]:
             self.batches.append(list(texts))
             return [self.take(t, t == "Second paragraph.") for t in texts]
 
-        def speak(self, text, seed):
+        def speak(self, text: str, seed: int) -> np.ndarray:
             self.singles.append(text)
             return self.take(text, False)
 
-        def hear(self, path):
+        def hear(self, path: Path) -> str:
             return self.takes[int(audio.read_wav(path)[0]) - 1]
 
     fake = FakeNarrator()
     monkeypatch.setattr(audio, "get_narrator", lambda voice, log: fake)
 
-    out = audio.run(book_wd, None, [], log=lambda m: None)
-    assert out.exists()
+    out = audio.run(book_wd, Path("voice"), [], log=lambda m: None)
+    assert out is not None and out.exists()
     assert len(fake.batches) == 1 and len(fake.batches[0]) == 4
     assert fake.singles == ["Second paragraph."]
     assert not (book_wd.root / "audio" / "report.json").exists()
 
     fake.batches.clear()
-    audio.run(book_wd, None, [], log=lambda m: None)  # everything exists: nothing is generated
+    audio.run(book_wd, Path("voice"), [], log=lambda m: None)  # everything exists: nothing is generated
     assert fake.batches == []
 
 
-def test_run_with_nothing_translated_yet_does_nothing(book_wd):
+def test_run_with_nothing_translated_yet_does_nothing(book_wd: WorkDir) -> None:
     for chunk in book_wd.load_chunks():
         chunk["translation"] = None
         book_wd.save_chunk(chunk)
-    assert audio.run(book_wd, None, [], log=lambda m: None) is None
+    assert audio.run(book_wd, Path("voice"), [], log=lambda m: None) is None
 
 
-def test_split_long_cuts_a_long_sentence_at_clauses_and_spaces():
+def test_split_long_cuts_a_long_sentence_at_clauses_and_spaces() -> None:
     names = ", ".join(f"Valaki Hosszúnévnek{i}" for i in range(60)) + "."
     pieces = audio.split_long(names)
     assert all(len(p) <= audio.MAX_PIECE_CHARS for p in pieces)
@@ -220,7 +224,7 @@ def test_split_long_cuts_a_long_sentence_at_clauses_and_spaces():
     assert all(len(p) <= audio.MAX_PIECE_CHARS for p in audio.split_long(no_marks))
 
 
-def test_speech_text_reads_urls_as_domains():
+def test_speech_text_reads_urls_as_domains() -> None:
     text = audio.speech_text("Lásd http://onlineethics.org/Topics/Prof/shuttle_telecon.aspx [már nem elérhető].")
     assert text == "Lásd onlineethics.org [már nem elérhető]."
     assert audio.speech_text("Lásd whatisessential.org.") == "Lásd whatisessential.org."

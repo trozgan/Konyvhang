@@ -10,6 +10,7 @@ import copy
 import html
 import itertools
 import re
+from typing import cast
 
 from lxml import etree
 
@@ -58,11 +59,11 @@ EPUB_TYPE = "{http://www.idpf.org/2007/ops}type"
 REFERENCE_TYPES = {"bibliography", "index"}
 
 
-def local(el) -> str:
+def local(el: etree._Element) -> str:
     return etree.QName(el).localname if isinstance(el.tag, str) else ""
 
 
-def semantics(el) -> set[str]:
+def semantics(el: etree._Element) -> set[str]:
     """epub:type and ARIA role values of an element, e.g. {"footnote", "doc-footnote"}."""
     values = set((el.get(EPUB_TYPE) or "").split()) | set((el.get("role") or "").split())
     return values | {v.removeprefix("doc-") for v in values}
@@ -89,9 +90,9 @@ def find_segments(tree: etree._ElementTree) -> list[etree._Element]:
 
 def inline_elements(segment: etree._Element) -> list[etree._Element]:
     """Inline descendants in document order; list index + 1 is the `n` attribute."""
-    out = []
+    out: list[etree._Element] = []
 
-    def walk(el):
+    def walk(el: etree._Element) -> None:
         for child in el:
             if not isinstance(child.tag, str):  # comments, processing instructions
                 continue
@@ -112,7 +113,7 @@ def to_markup(segment: etree._Element) -> str:
     """
     counter = itertools.count(1)
 
-    def build(src, dst):
+    def build(src: etree._Element, dst: etree._Element) -> etree._Element:
         dst.text = src.text
         for child in src:
             if not isinstance(child.tag, str):
@@ -135,10 +136,10 @@ def apply_translation(segment: etree._Element, translated: etree._Element) -> No
     """
     originals = inline_elements(segment)
 
-    def build(src, dst):
+    def build(src: etree._Element, dst: etree._Element) -> None:
         dst.text = src.text
         for child in src:
-            orig = originals[int(child.get("n")) - 1]
+            orig = originals[int(cast(str, child.get("n"))) - 1]  # validate.check() compared the n attributes
             if local(orig) in OPAQUE_TAGS:
                 new = copy.deepcopy(orig)
                 dst.append(new)

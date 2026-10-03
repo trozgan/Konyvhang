@@ -14,8 +14,10 @@ import subprocess
 import time
 import wave
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 import numpy as np
 
@@ -51,7 +53,7 @@ def speech_text(markup: str) -> str:
     return URL.sub(r"\1", segment.plain_text(markup))  # a web address is read as its domain only
 
 
-def split_long(text: str, patterns: tuple = ()) -> list[str]:
+def split_long(text: str, patterns: tuple[re.Pattern[str], ...] = ()) -> list[str]:
     """Pieces of at most MAX_PIECE_CHARS: cut at sentence ends, then clause marks, then spaces.
 
     The model tends to drop the end of very long inputs, so no piece may stay long.
@@ -83,7 +85,7 @@ def landmark_files(zf: zipfile.ZipFile, book: epub.Book) -> set[str]:
     out = set()
     for a in nav.iterfind(".//{http://www.w3.org/1999/xhtml}a"):
         if segment.semantics(a) & SKIP_TYPES and a.get("href"):
-            out.add(resolve(base, a.get("href"))[0])
+            out.add(resolve(base, cast(str, a.get("href")))[0])
     return out
 
 
@@ -105,7 +107,7 @@ class SegmentInfo:
     refs: list[NoteKey]  # footnotes this segment cites
 
 
-def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
+def chapters(wd: WorkDir, skip: list[str]) -> list[dict[str, Any]]:
     """Translated text grouped by spine file: [{"file", "title", "segments": [{"text", "heading"}]}].
 
     Pages the publisher marks as cover, title page, TOC or copyright are left out.
@@ -135,7 +137,7 @@ def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
                 refs = []
                 for a in el.iter("{http://www.w3.org/1999/xhtml}a"):
                     if "noteref" in segment.semantics(a) and a.get("href"):
-                        file, frag = resolve(base, a.get("href"))
+                        file, frag = resolve(base, cast(str, a.get("href")))
                         refs.append((file or path, frag))
                 info[(path, idx)] = SegmentInfo(segment.local(el) in HEADING_TAGS, note, refs)
 
@@ -152,7 +154,7 @@ def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
         if note:
             notes.setdefault(note, []).append(text)
 
-    out: list[dict] = []
+    out: list[dict[str, Any]] = []
     for (file, idx), text in texts.items():
         meta = info[(file, idx)]
         if meta.note or file in skipped or any(s in file for s in skip):
@@ -171,7 +173,7 @@ def chapters(wd: WorkDir, skip: list[str]) -> list[dict]:
     return out
 
 
-def add_pieces(book: list[dict], spoken: dict[str, str]) -> None:
+def add_pieces(book: list[dict[str, Any]], spoken: dict[str, str]) -> None:
     """Split each segment (with numbers spelled out) into pieces with the pause after them."""
     for chapter in book:
         chapter["pieces"] = []
@@ -188,7 +190,7 @@ SPEECH_BATCH = 60
 DIGIT = re.compile(r"\d")
 
 
-def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
+def spell_numbers(wd: WorkDir, texts: list[str], log: Callable[[str], None]) -> dict[str, str]:
     """Spoken forms for texts with digits, made once by Claude and cached in speech.json."""
     from . import llm
 
@@ -241,7 +243,8 @@ def write_wav(path: Path, pcm: np.ndarray) -> None:
 
 
 def to_pcm(audio: np.ndarray) -> np.ndarray:
-    return (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    pcm: np.ndarray = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+    return pcm
 
 
 def read_wav(path: Path) -> np.ndarray:
@@ -263,7 +266,7 @@ def to_aac(src: Path, dest: Path) -> None:
 
 # generation ----------------------------------------------------------------
 class Narrator:
-    def __init__(self, voice: Path):
+    def __init__(self, voice: Path) -> None:
         from mlx_audio.stt.utils import load_model as load_stt
         from mlx_audio.tts import load as load_tts
 
@@ -300,7 +303,8 @@ class Narrator:
         return [np.array(r.audio, dtype=np.float32) for r in sorted(results, key=lambda r: r.sequence_idx)]
 
     def hear(self, path: Path) -> str:
-        return self.stt.generate(str(path), language="hu").text.strip()
+        text: str = self.stt.generate(str(path), language="hu").text.strip()
+        return text
 
 
 def frame_limit(texts: list[str]) -> int:
@@ -311,7 +315,7 @@ def frame_limit(texts: list[str]) -> int:
 _narrators: dict[Path, Narrator] = {}
 
 
-def get_narrator(voice: Path, log) -> Narrator:
+def get_narrator(voice: Path, log: Callable[[str], None]) -> Narrator:
     """Load the models once per process; --follow reuses them across passes."""
     if voice not in _narrators:
         log("Modellek betöltése…")
@@ -320,11 +324,11 @@ def get_narrator(voice: Path, log) -> Narrator:
 
 
 def piece_key(text: str) -> str:
-    return hashlib.sha1(text.encode()).hexdigest()[:16]
+    return hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def piece_seed(text: str, attempt: int) -> int:
-    return int(hashlib.sha1(text.encode()).hexdigest()[:8], 16) + attempt
+    return int(hashlib.sha1(text.encode(), usedforsecurity=False).hexdigest()[:8], 16) + attempt
 
 
 def generate_piece(narrator: "Narrator", text: str, check: Path) -> tuple[float, np.ndarray, str]:
@@ -339,11 +343,13 @@ def generate_piece(narrator: "Narrator", text: str, check: Path) -> tuple[float,
             best = (score, audio, heard)
         if score >= MIN_SIMILARITY:
             break
-    assert best is not None  # ATTEMPTS >= 1
+    assert best is not None  # noqa: S101 - narrows the type for mypy; ATTEMPTS >= 1
     return best
 
 
-def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=True)) -> Path | None:
+def run(
+    wd: WorkDir, voice: Path, skip: list[str], log: Callable[[str], None] = lambda m: print(m, flush=True)
+) -> Path | None:
     audio_dir = wd.root / "audio"
     pieces_dir = audio_dir / "pieces"
     chapters_dir = audio_dir / "chapters"
@@ -414,11 +420,11 @@ def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=
     return out
 
 
-def chapter_path(chapters_dir: Path, chapter: dict, suffix: str) -> Path:
+def chapter_path(chapters_dir: Path, chapter: dict[str, Any], suffix: str) -> Path:
     return chapters_dir / (Path(chapter["file"]).stem + suffix)
 
 
-def build_chapter(chapter: dict, pieces_dir: Path, chapters_dir: Path) -> bool:
+def build_chapter(chapter: dict[str, Any], pieces_dir: Path, chapters_dir: Path) -> bool:
     """Join the chapter's pieces with pauses into an .m4a. Skipped when the same pieces were joined before."""
     keys = [piece_key(p["text"]) for p in chapter["pieces"]]
     manifest = chapter_path(chapters_dir, chapter, ".json")
@@ -449,9 +455,9 @@ def duration_ms(path: Path) -> int:
 
 
 # metadata ------------------------------------------------------------------
-def book_metadata(wd: WorkDir) -> dict:
+def book_metadata(wd: WorkDir) -> dict[str, Any]:
     """Hungarian title, authors, cover image and TOC chapter titles, from the source EPUB and labels.json."""
-    labels = json.loads(wd.labels_path.read_text(encoding="utf-8")) if wd.labels_path.exists() else {}
+    labels: dict[str, str] = json.loads(wd.labels_path.read_text(encoding="utf-8")) if wd.labels_path.exists() else {}
 
     def hu(text: str) -> str:
         text = " ".join(text.split())
@@ -472,7 +478,8 @@ def book_metadata(wd: WorkDir) -> dict:
             candidates.append(items[meta.get("content")])
         for item in candidates:
             if item.get("media-type") in {"image/jpeg", "image/png"}:
-                cover = (resolve(base, item.get("href"))[0], zf.read(resolve(base, item.get("href"))[0]))
+                href = cast(str, item.get("href"))
+                cover = (resolve(base, href)[0], zf.read(resolve(base, href)[0]))
                 break
 
         toc: dict[str, str] = {}
@@ -492,7 +499,7 @@ def ffmeta_escape(text: str) -> str:
     return re.sub(r"([=;#\\\n])", r"\\\1", text)
 
 
-def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> None:
+def build_m4b(wd: WorkDir, book: list[dict[str, Any]], chapters_dir: Path, out: Path) -> None:
     wd.out_dir.mkdir(exist_ok=True)
     info = book_metadata(wd)
     title = ": ".join(info["titles"][:2]) or wd.book_id
@@ -536,7 +543,13 @@ def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> N
     tmp.replace(out)
 
 
-def follow(wd: WorkDir, voice: Path, skip: list[str], poll: int = 60, log=lambda m: print(m, flush=True)) -> None:
+def follow(
+    wd: WorkDir,
+    voice: Path,
+    skip: list[str],
+    poll: int = 60,
+    log: Callable[[str], None] = lambda m: print(m, flush=True),
+) -> None:
     """Keep up with a running translation: one pass per newly translated chunk, until the book is done."""
     while True:
         translated = sum(c["translation"] is not None for c in wd.load_chunks())

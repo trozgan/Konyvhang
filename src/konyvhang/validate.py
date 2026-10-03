@@ -1,6 +1,7 @@
 """Parse a model response into segments and check it against the source."""
 
 import re
+from typing import cast
 
 from lxml import etree
 
@@ -21,9 +22,9 @@ def parse_segments(text: str) -> dict[str, etree._Element]:
         root = etree.fromstring(f"<root>{body}</root>")
     except etree.XMLSyntaxError as e:
         raise ValidationError(f"A válasz nem jól formált XML: {e}") from None
-    segs = {}
+    segs: dict[str, etree._Element] = {}
     for seg in root.iterfind("seg"):
-        sid = seg.get("id")
+        sid = cast(str, seg.get("id"))  # None at runtime when the model drops the id
         if sid in segs:
             raise ValidationError(f"A {sid} azonosítójú szegmens többször szerepel.")
         segs[sid] = seg

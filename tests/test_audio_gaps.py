@@ -5,7 +5,10 @@ import subprocess
 import sys
 import types
 import zipfile
+from collections.abc import Callable, Iterator, Mapping
+from pathlib import Path
 from types import SimpleNamespace as NS
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -32,7 +35,9 @@ def item(id_: str, href: str, media: str = "application/xhtml+xml", props: str =
     return f'<item id="{id_}" href="{href}" media-type="{media}"{extra}/>'
 
 
-def make_book(tmp_path, files: dict[str, str | bytes], translate=None) -> WorkDir:
+def make_book(
+    tmp_path: Path, files: Mapping[str, str | bytes], translate: Callable[[str], str] | None = None
+) -> WorkDir:
     """An EPUB from `files`, chunked, with translations echoing the source (or `translate(src)`)."""
     src = tmp_path / "b.epub"
     with zipfile.ZipFile(src, "w") as zf:
@@ -52,7 +57,7 @@ def make_book(tmp_path, files: dict[str, str | bytes], translate=None) -> WorkDi
 
 
 # chapters --------------------------------------------------------------------
-def test_chapters_skip_marked_pages_and_handle_odd_notes(tmp_path):
+def test_chapters_skip_marked_pages_and_handle_odd_notes(tmp_path: Path) -> None:
     files = {
         "OEBPS/content.opf": opf(
             item("cv", "cover.xhtml") + item("ix", "ix.xhtml") + item("a", "ch.xhtml") + item("n", "note.xhtml"),
@@ -82,14 +87,14 @@ def test_chapters_skip_marked_pages_and_handle_odd_notes(tmp_path):
 
 
 # numbers ---------------------------------------------------------------------
-def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path, monkeypatch):
+def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     wd = WorkDir(tmp_path / "w")
     wd.root.mkdir()
     wd.save_state({"profile": "fiction", "model": "opus", "source_name": "x.epub"})
     answers = iter(['["egy"]', "nem json", '["kettő", "három"]'])
-    seen = []
+    seen: list[str | None] = []
 
-    def fake_call(prompt, system, model):
+    def fake_call(prompt: str, system: str, model: str | None) -> llm.Result:
         seen.append(model)
         answer = next(answers, None)
         if answer is None:
@@ -98,7 +103,7 @@ def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path, monkeypa
 
     monkeypatch.setattr(llm, "caller", lambda provider: fake_call)
     monkeypatch.setattr(audio, "SPEECH_BATCH", 1)
-    logs = []
+    logs: list[str] = []
     texts = ["1 alma", "2 körte", "3 szilva", "4 dió", "szöveg szám nélkül", "1 alma"]
 
     cache = audio.spell_numbers(wd, texts, logs.append)
@@ -116,54 +121,54 @@ def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path, monkeypa
 
 # models ----------------------------------------------------------------------
 @pytest.fixture
-def fake_mlx(monkeypatch):
+def fake_mlx(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     """mlx_audio stand-ins: TTS returns tiny arrays, STT hears a fixed text."""
-    calls = {"tts": 0, "stt": 0}
+    calls: dict[str, Any] = {"tts": 0, "stt": 0}
 
     class TTS:
-        def encode_reference_audio(self, path):
+        def encode_reference_audio(self, path: str) -> str:
             calls["ref"] = path
             return "codes"
 
-        def generate(self, **kw):
+        def generate(self, **kw: object) -> Iterator[NS]:
             calls["generate"] = kw
             yield NS(audio=[0.5, -0.5])
 
-        def batch_generate(self, **kw):
+        def batch_generate(self, **kw: Any) -> list[NS]:  # noqa: ANN401 - mirrors the untyped mlx_audio API
             calls["batch"] = kw
             # out of order on purpose: speak_batch must sort by sequence_idx
             return [NS(sequence_idx=i, audio=[float(i)]) for i in reversed(range(len(kw["texts"])))]
 
     class STT:
-        def generate(self, path, language):
+        def generate(self, path: str, language: str) -> NS:
             calls["heard"] = (path, language)
             return NS(text="  hallott  ")
 
-    def load_tts(name):
+    def load_tts(name: str) -> TTS:
         calls["tts"] += 1
         return TTS()
 
-    def load_stt(name):
+    def load_stt(name: str) -> STT:
         calls["stt"] += 1
         return STT()
 
     for name in ("mlx_audio", "mlx_audio.stt"):
         monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
     tts_mod = types.ModuleType("mlx_audio.tts")
-    tts_mod.load = load_tts
+    monkeypatch.setattr(tts_mod, "load", load_tts, raising=False)
     stt_mod = types.ModuleType("mlx_audio.stt.utils")
-    stt_mod.load_model = load_stt
+    monkeypatch.setattr(stt_mod, "load_model", load_stt, raising=False)
     monkeypatch.setitem(sys.modules, "mlx_audio.tts", tts_mod)
     monkeypatch.setitem(sys.modules, "mlx_audio.stt.utils", stt_mod)
     monkeypatch.setattr(audio, "_narrators", {})
     return calls
 
 
-def test_narrator_wraps_the_models_and_is_loaded_once(tmp_path, fake_mlx):
+def test_narrator_wraps_the_models_and_is_loaded_once(tmp_path: Path, fake_mlx: dict[str, Any]) -> None:
     voice = tmp_path / "voice"
     voice.mkdir()
     (voice / "voice.txt").write_text(" Minta szöveg. \n", encoding="utf-8")
-    logs = []
+    logs: list[str] = []
 
     narrator = audio.get_narrator(voice, logs.append)
     assert audio.get_narrator(voice, logs.append) is narrator
@@ -184,41 +189,41 @@ def test_narrator_wraps_the_models_and_is_loaded_once(tmp_path, fake_mlx):
     assert fake_mlx["heard"] == (str(tmp_path / "x.wav"), "hu")
 
 
-def test_frame_limit_grows_with_the_longest_text():
+def test_frame_limit_grows_with_the_longest_text() -> None:
     assert audio.frame_limit(["x" * 1000, "y"]) == 3000
 
 
 class ScriptedNarrator:
     """Takes carry an id in their first sample; `heard` maps a take id to what Whisper hears."""
 
-    def __init__(self, heard_for):
+    def __init__(self, heard_for: Callable[[str, int], str]) -> None:
         self.heard_for = heard_for  # (text, attempt) -> heard text
         self.takes: list[tuple[str, int]] = []
         self.attempts: dict[str, int] = {}
 
-    def _take(self, text):
+    def _take(self, text: str) -> np.ndarray:
         attempt = self.attempts.get(text, 0)
         self.attempts[text] = attempt + 1
         self.takes.append((text, attempt))
         return np.full(240, len(self.takes) / 32767, dtype=np.float32)
 
-    def speak_batch(self, texts, seed):
+    def speak_batch(self, texts: list[str], seed: int) -> list[np.ndarray]:
         return [self._take(t) for t in texts]
 
-    def speak(self, text, seed):
+    def speak(self, text: str, seed: int) -> np.ndarray:
         return self._take(text)
 
-    def hear(self, path):
+    def hear(self, path: Path) -> str:
         text, attempt = self.takes[int(audio.read_wav(path)[0]) - 1]
         return self.heard_for(text, attempt)
 
 
-def test_generate_piece_keeps_the_best_of_all_failed_takes(tmp_path):
+def test_generate_piece_keeps_the_best_of_all_failed_takes(tmp_path: Path) -> None:
     text = "Ebből a nézőpontból minden ugyanolyan észszerű."
     heard = {0: "Ebből a nézőpontból", 1: "Ebből", 2: "semmi"}  # attempts after the batch take: 1, 2, 3
     narrator = ScriptedNarrator(lambda t, attempt: heard.get(attempt - 1, ""))
 
-    score, _, best_heard = audio.generate_piece(narrator, text, tmp_path / "check.wav")
+    score, _, best_heard = audio.generate_piece(cast(audio.Narrator, narrator), text, tmp_path / "check.wav")
 
     assert narrator.attempts[text] == audio.ATTEMPTS  # never good enough: every attempt used
     assert best_heard == "Ebből a nézőpontból"
@@ -226,7 +231,7 @@ def test_generate_piece_keeps_the_best_of_all_failed_takes(tmp_path):
 
 
 # the whole run ------------------------------------------------------------------
-def two_chapter_book(tmp_path) -> WorkDir:
+def two_chapter_book(tmp_path: Path) -> WorkDir:
     files = {
         "OEBPS/content.opf": opf(
             item("a", "one.xhtml") + item("b", "two.xhtml"), '<itemref idref="a"/><itemref idref="b"/>'
@@ -237,15 +242,17 @@ def two_chapter_book(tmp_path) -> WorkDir:
     return make_book(tmp_path, files)
 
 
-def test_run_reports_bad_pieces_builds_chapters_window_by_window_and_rebuilds_lost_ones(tmp_path, monkeypatch):
+def test_run_reports_bad_pieces_builds_chapters_window_by_window_and_rebuilds_lost_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     wd = two_chapter_book(tmp_path)
     narrator = ScriptedNarrator(lambda text, attempt: "valami egészen más" if text.startswith("Ezt") else text)
     monkeypatch.setattr(audio, "get_narrator", lambda voice, log: narrator)
     monkeypatch.setattr(audio, "WINDOW", 1)  # one piece per window: chapter two is unfinished after window one
     monkeypatch.setattr(audio, "BATCH_SIZE", 1)
-    logs = []
+    logs: list[str] = []
 
-    out = audio.run(wd, None, [], log=logs.append)
+    out = audio.run(wd, Path("voice"), [], log=logs.append)
 
     assert out is not None and out.exists()
     report = json.loads((wd.root / "audio" / "report.json").read_text(encoding="utf-8"))
@@ -257,7 +264,7 @@ def test_run_reports_bad_pieces_builds_chapters_window_by_window_and_rebuilds_lo
     (wd.root / "audio" / "chapters" / "one.m4a").unlink()
     narrator.takes.clear()
     logs.clear()
-    audio.run(wd, None, [], log=logs.append)
+    audio.run(wd, Path("voice"), [], log=logs.append)
     assert narrator.takes == []
     assert [m for m in logs if m.startswith("Fejezet kész")] == [
         f"Fejezet kész: {wd.root / 'audio' / 'chapters' / 'one.m4a'}  (Az első fejezet szövege.)"
@@ -265,7 +272,7 @@ def test_run_reports_bad_pieces_builds_chapters_window_by_window_and_rebuilds_lo
 
 
 # metadata -----------------------------------------------------------------------
-def png_bytes(tmp_path) -> bytes:
+def png_bytes(tmp_path: Path) -> bytes:
     path = tmp_path / "c.png"
     subprocess.run(
         ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=blue:s=8x8", "-frames:v", "1", str(path)],
@@ -274,8 +281,8 @@ def png_bytes(tmp_path) -> bytes:
     return path.read_bytes()
 
 
-def test_book_metadata_finds_the_cover_through_meta_name(tmp_path):
-    files = {
+def test_book_metadata_finds_the_cover_through_meta_name(tmp_path: Path) -> None:
+    files: dict[str, str | bytes] = {
         "OEBPS/content.opf": opf(
             item("a", "ch.xhtml") + item("odd", "ch.xhtml", props="cover-image") + item("img", "c.png", "image/png"),
             '<itemref idref="a"/>',
@@ -289,7 +296,7 @@ def test_book_metadata_finds_the_cover_through_meta_name(tmp_path):
     assert info["toc"] == {}  # no nav
 
 
-def test_book_without_cover_or_nav_still_makes_an_m4b(tmp_path, monkeypatch):
+def test_book_without_cover_or_nav_still_makes_an_m4b(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     files = {
         "OEBPS/content.opf": opf(
             item("a", "ch.xhtml") + item("odd", "ch.xhtml", props="cover-image"), '<itemref idref="a"/>'
@@ -301,7 +308,7 @@ def test_book_without_cover_or_nav_still_makes_an_m4b(tmp_path, monkeypatch):
     narrator = ScriptedNarrator(lambda text, attempt: text)
     monkeypatch.setattr(audio, "get_narrator", lambda voice, log: narrator)
 
-    out = audio.run(wd, None, [], log=lambda m: None)
+    out = audio.run(wd, Path("voice"), [], log=lambda m: None)
 
     probe = json.loads(
         subprocess.run(
