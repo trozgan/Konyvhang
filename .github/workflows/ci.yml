@@ -50,7 +50,12 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
+      - name: Install ffmpeg (Linux, Windows)
+        if: runner.os != 'macOS'
+        uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
+      - name: Install ffmpeg (macOS, ARM runners are not supported by the action above)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
       - run: uv sync
       - name: Tests with 100% line and branch coverage
         run: uv run pytest --cov --cov-report=term-missing --cov-report=xml

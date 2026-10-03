@@ -49,7 +49,7 @@ Data flow: EPUB → segments → chunks → model → validated translation → 
 
 - **Segment identity is positional.** A segment is `(file, idx)` in `find_segments()` order of the *original* XHTML. Never change `find_segments`, `BLOCK_TAGS` or `inline_elements` without considering existing work folders: their chunks would map to the wrong blocks.
 - **Inline numbering must follow `inline_elements()` order.** `to_markup` counts while walking; never key elements by `id()` (lxml proxies are recreated and ids get reused).
-- **Every file read/write passes `encoding="utf-8"`.** Windows defaults to cp1252; ruff rule `PLW1514` enforces this.
+- **Every file read/write passes `encoding="utf-8"`, and so does every `subprocess` call with `text=True`.** Windows defaults to cp1252. Ruff rule `PLW1514` enforces it for files; for `subprocess` only review and the Windows CI job catch it.
 - **Writes that other processes read are atomic** (`write_json`, `to_aac`, the `.m4b`): write a temp file, then `replace`. The audio follower reads chunks while translation writes them.
 - **Model output is untrusted.** Always go through `validate.parse_and_check` / `llm.parse_json`; never trust that a JSON or XML answer is complete.
 - **Resumability.** Every unit of work (chunk, glossary slice, audio piece keyed by the SHA-1 of its spoken text, chapter manifest) is saved as soon as it is done, and reruns skip finished units. Keep it that way for new steps.
