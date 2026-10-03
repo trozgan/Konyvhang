@@ -5,14 +5,37 @@ helyben, a Higgs TTS 3 modellel.
 
 A lefordított könyvet csak saját használatra készítsd el, ne terjeszd tovább.
 
+> *In English:* Könyvhang translates EPUB books into Hungarian with a language model
+> (Claude, Codex, or any model via the Anthropic, OpenAI or OpenRouter APIs) and reads
+> them aloud locally into a chaptered `.m4b` audiobook (Higgs TTS 3 on MLX, Apple Silicon).
+> Runs are resumable and every model answer is validated. The docs are in Hungarian.
+
 ## Telepítés
 
 ```
+git clone https://github.com/trozgan/Konyvhang.git
+cd Konyvhang
 uv sync
 ```
 
-Kell hozzá a bejelentkezett `claude` parancs. Ha az `epubcheck` telepítve van
-(`brew install epubcheck`), a `build` lefuttatja a kész könyvön.
+Kell hozzá a [`uv`](https://docs.astral.sh/uv/) és egy modellszolgáltató: előfizetéssel
+a bejelentkezett `claude` vagy `codex` parancs, vagy egy API-kulcs (lásd lent). A fordítás
+Linuxon, macOS-en és Windowson is fut; a hangoskönyvhöz Apple Silicon kell. Ha az
+`epubcheck` telepítve van (`brew install epubcheck`), a `build` lefuttatja a kész könyvön.
+
+## Gyors indulás
+
+Előfizetés nélkül, OpenRouter API-kulccsal, csak fordítás:
+
+```
+export OPENROUTER_API_KEY=...
+uv run konyvhang run könyv.epub --profile fiction --provider openrouter --model openai/gpt-6-sol --no-audio
+```
+
+A program elkészíti a szójegyzéket, és megáll, hogy átnézd (`work/<könyv>/glossary.yaml`).
+Utána lefordítja a könyvet, a kész EPUB a `work/<könyv>/out/` mappába kerül. Ha bármikor
+megszakad, ugyanezzel a paranccsal folytatható. Kipróbálni a mintakönyvvel lehet:
+`samples/gift-of-the-magi.epub`.
 
 ## Modellszolgáltató
 
@@ -142,6 +165,9 @@ uv run pytest --cov             # tesztek, 100% sor- és áglefedettség alatt e
 
 A CI ugyanezeket futtatja Linuxon, macOS-en és Windowson, emellett `pip-audit`-tal
 ellenőrzi a zárolt függőségeket, a CodeQL pedig biztonsági elemzést végez.
+
+Hozzájárulás előtt olvasd el a [CONTRIBUTING.md](CONTRIBUTING.md) fájlt; biztonsági hibát a
+[SECURITY.md](SECURITY.md) szerint jelents.
 
 ## Licencek
 

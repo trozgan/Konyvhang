@@ -1,0 +1,19 @@
+name: Ötlet
+description: Új funkció vagy egy meglévő javítása.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Milyen problémát old meg?
+      description: Mit szeretnél elérni, és most mi akadályoz benne?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Javasolt megoldás
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Más lehetőségek, amiket megfontoltál

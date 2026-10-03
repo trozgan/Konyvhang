@@ -1,0 +1,54 @@
+name: Hibajelentés
+description: Valami nem úgy működik, ahogy kellene.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Ne csatolj könyvet, fordítást vagy hangfájlt** – ezek jogvédettek, és itt bárki letöltheti őket.
+        Ha a hiba egy adott könyvhöz kötődik, írd le a szerkezetét, vagy készíts egy kicsi EPUB-ot, amely előidézi.
+        Biztonsági hibát ne itt jelents, hanem a SECURITY.md szerint.
+  - type: textarea
+    id: what
+    attributes:
+      label: Mi történt?
+      description: Mit vártál, és mi történt helyette?
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: Parancs és kimenet
+      description: A futtatott parancs és a hibaüzenet vagy a kimenet vége. API-kulcsot ne másolj be.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: status
+    attributes:
+      label: "`konyvhang status <könyv>` kimenete"
+      render: shell
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Modellszolgáltató
+      options: [claude, codex, anthropic, openai, openrouter, nem a fordításnál jött elő]
+    validations:
+      required: true
+  - type: input
+    id: model
+    attributes:
+      label: Modell
+      placeholder: például opus vagy openai/gpt-6-sol
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operációs rendszer
+      options: [macOS (Apple Silicon), macOS (Intel), Linux, Windows]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Verzió
+      description: "`git rev-parse --short HEAD` és `uv run python --version`"
