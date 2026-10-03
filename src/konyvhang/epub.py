@@ -5,6 +5,7 @@ import re
 import zipfile
 from dataclasses import dataclass
 from html.entities import name2codepoint
+from urllib.parse import unquote
 
 from lxml import etree
 
@@ -51,8 +52,8 @@ def read_book(zf: zipfile.ZipFile) -> Book:
     opf = parse_xml(zf.read(opf_path))
     base = posixpath.dirname(opf_path)
 
-    def resolve(href: str) -> str:
-        return posixpath.normpath(posixpath.join(base, href.split("#", maxsplit=1)[0]))
+    def resolve(href: str) -> str:  # hrefs are URLs: "ch%201.xhtml" is the ZIP entry "ch 1.xhtml"
+        return posixpath.normpath(posixpath.join(base, unquote(href.split("#", maxsplit=1)[0])))
 
     items = {}
     nav_path = ncx_path = None
