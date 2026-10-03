@@ -515,7 +515,6 @@ def build_m4b(wd: WorkDir, book: list[dict[str, Any]], chapters_dir: Path, out: 
         f"artist={ffmeta_escape(authors)}",
         f"album_artist={ffmeta_escape(authors)}",
         "genre=Audiobook",
-        "language=hun",
     ]
     start = 0
     concat = []
@@ -534,7 +533,8 @@ def build_m4b(wd: WorkDir, book: list[dict[str, Any]], chapters_dir: Path, out: 
     # The chapters are already AAC: join them without re-encoding, which takes seconds
     # instead of decoding the whole book into memory.
     inputs = ["-f", "concat", "-safe", "0", "-i", str(list_path), "-i", str(meta_path)]
-    maps = ["-map", "0:a", "-map_metadata", "1", "-map_chapters", "1"]
+    # the mp4 muxer ignores a global language tag: the audio track carries it
+    maps = ["-map", "0:a", "-map_metadata", "1", "-map_chapters", "1", "-metadata:s:a:0", "language=hun"]
     if info["cover"]:
         cover_path = chapters_dir / ("cover" + Path(info["cover"][0]).suffix)
         cover_path.write_bytes(info["cover"][1])
