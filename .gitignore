@@ -5,3 +5,6 @@ __pycache__/
 .pytest_cache/
 tts_try/
 voices/
+!samples/*.epub
+bench/
+bench_run.log
