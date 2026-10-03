@@ -15,7 +15,7 @@ import time
 import wave
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import numpy as np
 
@@ -88,11 +88,12 @@ def landmark_files(zf: zipfile.ZipFile, book: epub.Book) -> set[str]:
 
 
 def resolve(base: str, href: str) -> tuple[str, str]:
-    """(file, fragment) of an href relative to the directory `base`."""
+    """(file, fragment) of an href relative to the directory `base`; the path is percent-decoded like a ZIP name."""
     import posixpath
+    from urllib.parse import unquote
 
     path, _, frag = href.partition("#")
-    return (posixpath.normpath(posixpath.join(base, path)) if path else "", frag)
+    return (posixpath.normpath(posixpath.join(base, unquote(path))) if path else "", frag)
 
 
 NoteKey = tuple[str, str]  # (file, element id) of a footnote
@@ -191,6 +192,7 @@ DIGIT = re.compile(r"\d")
 def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
     """Spoken forms for texts with digits, made once by Claude and cached in speech.json."""
     from . import llm
+    from .translate import is_string_list
 
     path = wd.root / "speech.json"
     cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
@@ -210,7 +212,7 @@ def spell_numbers(wd: WorkDir, texts: list[str], log) -> dict[str, str]:
         except (ValueError, llm.LLMError) as e:
             log(f"  nem sikerült, ezek a bekezdések számjegyekkel maradnak: {str(e)[:200]}")
             continue
-        if len(spoken) != len(batch):
+        if not is_string_list(spoken) or len(spoken) != len(batch):
             log("  az elemszám eltér, ezek a bekezdések számjegyekkel maradnak")
             continue
         cache.update(zip(batch, spoken, strict=True))
@@ -415,7 +417,9 @@ def run(wd: WorkDir, voice: Path, skip: list[str], log=lambda m: print(m, flush=
 
 
 def chapter_path(chapters_dir: Path, chapter: dict, suffix: str) -> Path:
-    return chapters_dir / (Path(chapter["file"]).stem + suffix)
+    """Named after the whole spine path: part1/chapter.xhtml and part2/chapter.xhtml must not share a file."""
+    name = re.sub(r"[^\w.-]+", "_", str(PurePosixPath(chapter["file"]).with_suffix("")))
+    return chapters_dir / (name + suffix)
 
 
 def build_chapter(chapter: dict, pieces_dir: Path, chapters_dir: Path) -> bool:
@@ -433,7 +437,7 @@ def build_chapter(chapter: dict, pieces_dir: Path, chapters_dir: Path) -> bool:
     write_wav(wav, np.concatenate(parts))
     to_aac(wav, m4a)
     wav.unlink()
-    manifest.write_text(json.dumps({"keys": keys}), encoding="utf-8")
+    write_json(manifest, {"keys": keys})
     return True
 
 
@@ -510,7 +514,7 @@ def build_m4b(wd: WorkDir, book: list[dict], chapters_dir: Path, out: Path) -> N
     concat = []
     for chapter in book:
         m4a = chapter_path(chapters_dir, chapter, ".m4a")
-        concat.append(f"file '{m4a.resolve()}'")
+        concat.append("file '{}'".format(str(m4a.resolve()).replace("'", "'\\''")))  # quoting of the concat list
         end = start + duration_ms(m4a)
         name = info["toc"].get(chapter["file"]) or chapter["title"]
         meta += ["[CHAPTER]", "TIMEBASE=1/1000", f"START={start}", f"END={end}", f"title={ffmeta_escape(name)}"]

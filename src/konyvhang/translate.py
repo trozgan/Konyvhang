@@ -7,7 +7,7 @@ from pathlib import Path
 from lxml import etree
 
 from . import llm, segment, validate
-from .workdir import WorkDir
+from .workdir import WorkDir, write_json
 
 PROMPTS = Path(__file__).parent / "prompts"
 CONTEXT_SEGMENTS = 10
@@ -103,6 +103,9 @@ def run(wd: WorkDir, call: Caller | None = None, max_chunks: int | None = None, 
         except llm.UsageLimitError as e:
             log(f"Elfogyott a keret, a futás leáll. Folytatás később ugyanezzel a paranccsal.\n{e}")
             return False
+        except (validate.ValidationError, llm.LLMError) as e:  # progress is saved; a rerun retries this chunk
+            log(f"A(z) {chunk['id']}. darab nem sikerült, a futás leáll:\n{e}")
+            return False
         chunk["translation"] = translation
         wd.save_chunk(chunk)
         previous = [segment.plain_text(m) for m in translation[-CONTEXT_SEGMENTS:]]
@@ -142,9 +145,12 @@ def translate_labels(wd: WorkDir, call: Caller, log) -> None:
     except (ValueError, llm.LLMError) as e:
         log(f"A címkék fordítása nem sikerült, az eredetiek maradnak: {e}")
         return
-    if len(translated) != len(unique):
+    if not is_string_list(translated) or len(translated) != len(unique):
         log("A címkék száma eltér, az eredetiek maradnak.")
         return
-    wd.labels_path.write_text(
-        json.dumps(dict(zip(unique, translated, strict=True)), ensure_ascii=False, indent=1), encoding="utf-8"
-    )
+    write_json(wd.labels_path, dict(zip(unique, translated, strict=True)))
+
+
+def is_string_list(value: object) -> bool:
+    """Model output is untrusted: a JSON answer must really be a list of strings."""
+    return isinstance(value, list) and all(isinstance(v, str) for v in value)

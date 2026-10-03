@@ -1,9 +1,13 @@
 """Parse a model response into segments and check it against the source."""
 
 import re
+from html.entities import name2codepoint
 
 from lxml import etree
 
+from .epub import XML_ENTITIES
+
+NAMED_ENTITY = re.compile(r"&([A-Za-z][A-Za-z0-9]*);")
 BARE_AMP = re.compile(r"&(?!#\d+;|#x[0-9a-fA-F]+;|amp;|lt;|gt;|quot;|apos;)")
 
 
@@ -16,7 +20,8 @@ def parse_segments(text: str) -> dict[str, etree._Element]:
     start, end = text.find("<seg"), text.rfind("</seg>")
     if start < 0 or end < 0:
         raise ValidationError("A válaszban nincs <seg> elem.")
-    body = BARE_AMP.sub("&amp;", text[start : end + len("</seg>")])
+    body = NAMED_ENTITY.sub(numeric_entity, text[start : end + len("</seg>")])
+    body = BARE_AMP.sub("&amp;", body)
     try:
         root = etree.fromstring(f"<root>{body}</root>")
     except etree.XMLSyntaxError as e:
@@ -24,10 +29,20 @@ def parse_segments(text: str) -> dict[str, etree._Element]:
     segs = {}
     for seg in root.iterfind("seg"):
         sid = seg.get("id")
+        if sid is None:
+            raise ValidationError("Az egyik <seg> elemnek nincs id attribútuma.")
         if sid in segs:
             raise ValidationError(f"A {sid} azonosítójú szegmens többször szerepel.")
         segs[sid] = seg
     return segs
+
+
+def numeric_entity(m: re.Match) -> str:
+    """HTML named entities such as &nbsp; are not XML: turn them into character references."""
+    name = m.group(1)
+    if name in XML_ENTITIES or name not in name2codepoint:
+        return m.group(0)
+    return f"&#{name2codepoint[name]};"
 
 
 def inline_signature(seg: etree._Element) -> list[tuple[str, str]]:

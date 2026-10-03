@@ -63,8 +63,9 @@ def prepare(
         shutil.rmtree(wd.root)
     wd.root.mkdir(parents=True)
     shutil.copyfile(src, wd.source)
-    wd.save_state({"profile": profile, "provider": provider, "model": model, "source_name": src.name})
     count = wd.write_chunks(references)
+    # state.json marks a prepared book, so it comes last: an EPUB that fails to chunk leaves no half book
+    wd.save_state({"profile": profile, "provider": provider, "model": model, "source_name": src.name})
     print(
         f"{wd.book_id}: {count} darab elkészült."
         + ("" if references else " Az irodalomjegyzék és a tárgymutató angolul marad.")
@@ -77,6 +78,8 @@ def build_glossary(wd: WorkDir) -> None:
         glossary.build(wd)
     except llm.UsageLimitError as e:
         sys.exit(f"Elfogyott a keret. Folytatás később ugyanezzel a paranccsal.\n{e}")
+    except (llm.LLMError, ValueError) as e:  # ValueError: the model's JSON was unusable twice
+        sys.exit(f"A szójegyzék nem készült el; a kész szeletek megmaradnak, újrafuttatható.\n{e}")
 
 
 def cmd_prepare(args) -> None:
@@ -126,7 +129,7 @@ def cmd_run(args) -> None:
             print(f"\nNézd át és javítsd a szójegyzéket: {wd.glossary_path}")
             input("Ha kész vagy, nyomj Entert a fordítás indításához… ")
 
-    audio_proc = None
+    audio: tuple[subprocess.Popen, threading.Thread] | None = None  # the child and the thread printing its output
     if args.no_audio:
         pass
     elif importlib.util.find_spec("mlx_audio") is None:
@@ -135,7 +138,7 @@ def cmd_run(args) -> None:
         cmd = [sys.executable, "-u", "-m", "konyvhang", "audio", wd.book_id, "--follow", "--voice", args.voice]
         if args.skip:
             cmd += ["--skip", *args.skip]
-        audio_proc = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -143,21 +146,23 @@ def cmd_run(args) -> None:
             encoding="utf-8",
             env={**os.environ, "PYTHONIOENCODING": "utf-8"},
         )
-        threading.Thread(target=prefix_lines, args=(audio_proc.stdout, "[hang] "), daemon=True).start()
+        printer = threading.Thread(target=prefix_lines, args=(proc.stdout, "[hang] "), daemon=True)
+        printer.start()
+        audio = (proc, printer)
 
     done = translate.run(wd, log=lambda m: print(f"[fordítás] {m}", flush=True))
     if done:
         build.build(wd, log=lambda m: print(f"[fordítás] {m}", flush=True))
     else:
         print("[fordítás] A fordítás megállt; folytatás később ugyanezzel a paranccsal.")
-    if audio_proc:
+    if audio:
+        proc, printer = audio
         if not done:
             print("[hang] A felolvasás a már lefordított részt még befejezi, aztán vár. Ctrl+C-vel leállítható.")
-        if audio_proc.wait() != 0:
-            sys.exit(
-                f"[hang] A felolvasás hibával állt le (kilépési kód {audio_proc.returncode}). "
-                "Ugyanezzel a paranccsal folytatható."
-            )
+        code = proc.wait()
+        printer.join()  # the last lines often say why the audio stopped
+        if code != 0:
+            sys.exit(f"[hang] A felolvasás hibával állt le (kilépési kód {code}). Ugyanezzel a paranccsal folytatható.")
     print(f"Kész. Az eredmény itt van: {wd.out_dir}")
 
 

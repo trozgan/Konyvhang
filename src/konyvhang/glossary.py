@@ -4,7 +4,7 @@ import json
 
 from . import llm, segment
 from .translate import PROMPTS, Caller, book_caller
-from .workdir import WorkDir
+from .workdir import WorkDir, write_json
 
 SLICE_WORDS = 40000
 PROFILE_NAMES = {"fiction": "szépirodalom", "nonfiction": "szakkönyv"}
@@ -56,7 +56,7 @@ def build(wd: WorkDir, call: Caller | None = None, log=print) -> None:
         if not part_path.exists():
             log(f"Szójegyzék: {i + 1}/{len(texts)}. szelet kigyűjtése")
             part = call_json(call, wd, f"<book_slice>\n{text}\n</book_slice>", extract_system, state["model"])
-            part_path.write_text(json.dumps(part, ensure_ascii=False, indent=1), encoding="utf-8")
+            write_json(part_path, part)  # atomic: a half-written part would break every later run
         parts.append(json.loads(part_path.read_text(encoding="utf-8")))
 
     log("Szójegyzék: összefésülés és magyar alakok")
