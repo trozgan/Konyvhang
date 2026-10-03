@@ -1,0 +1,7 @@
+work/
+*.epub
+.venv/
+__pycache__/
+.pytest_cache/
+tts_try/
+voices/

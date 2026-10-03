@@ -1,0 +1,20 @@
+[project]
+name = "konyvhang"
+version = "0.1.0"
+description = "EPUB-könyvek fordítása magyarra és hangoskönyv készítése belőlük"
+requires-python = ">=3.12"
+dependencies = ["lxml>=5", "pyyaml>=6"]
+
+[project.scripts]
+konyvhang = "konyvhang.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+tts = [
+    "mlx-audio>=0.5.7",
+    "torch>=2.14.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

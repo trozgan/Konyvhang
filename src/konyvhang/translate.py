@@ -1,0 +1,137 @@
+"""The translation loop: one claude call per chunk, validated, saved at once."""
+
+import json
+from collections.abc import Callable
+from pathlib import Path
+
+from lxml import etree
+
+from . import claude_cli, segment, validate
+from .workdir import WorkDir
+
+PROMPTS = Path(__file__).parent / "prompts"
+CONTEXT_SEGMENTS = 10
+
+Caller = Callable[[str, str, str], claude_cli.Result]
+
+
+def system_prompt(profile: str) -> str:
+    return (PROMPTS / "common.md").read_text() + "\n" + (PROMPTS / f"{profile}.md").read_text()
+
+
+def build_prompt(glossary: str, previous: list[str], segs: list[dict]) -> str:
+    source = "\n".join(f'<seg id="{i + 1}">{s["src"]}</seg>' for i, s in enumerate(segs))
+    context = "\n\n".join(previous)
+    return (
+        f"<glossary>\n{glossary}\n</glossary>\n\n"
+        f"<previous_translation>\n{context}\n</previous_translation>\n\n"
+        f"<source>\n{source}\n</source>\n"
+    )
+
+
+def translate_segments(
+    wd: WorkDir, segs: list[dict], previous: list[str], call: Caller, log: Callable[[str], None]
+) -> list[str]:
+    """Translate segments; returns markup per segment, in order.
+
+    A failed response is retried once with the error attached. If that fails too,
+    the segments are halved and each half is translated on its own.
+    """
+    state = wd.load_state()
+    system = system_prompt(state["profile"])
+    source = {str(i + 1): s["src"] for i, s in enumerate(segs)}
+    prompt = build_prompt(wd.glossary_text(), previous, segs)
+
+    error = None
+    for attempt in range(2):
+        full_prompt = prompt
+        if error:
+            full_prompt += (
+                "\n<previous_attempt_error>\nAz előző válaszod hibás volt:\n"
+                f"{error}\nJavítsd, és add vissza újra az összes szegmenst.\n</previous_attempt_error>\n"
+            )
+        try:
+            result = call(full_prompt, system, state["model"])
+            wd.add_usage(result.usage)
+            parsed = validate.parse_and_check(result.text, source)
+            return [inner_markup(parsed[str(i + 1)]) for i in range(len(segs))]
+        except (validate.ValidationError, claude_cli.ClaudeError) as e:
+            if isinstance(e, claude_cli.UsageLimitError):
+                raise
+            error = str(e)
+            log(f"  hibás válasz ({attempt + 1}. próba): {error.splitlines()[0][:200]}")
+
+    if len(segs) == 1:
+        raise validate.ValidationError(f"Egyetlen szegmens sem fordítható hibátlanul: {error}")
+    half = len(segs) // 2
+    log(f"  kettévágás: {half} + {len(segs) - half} szegmens")
+    first = translate_segments(wd, segs[:half], previous, call, log)
+    tail = [segment.plain_text(m) for m in first[-CONTEXT_SEGMENTS:]]
+    return first + translate_segments(wd, segs[half:], tail, call, log)
+
+
+def inner_markup(seg: etree._Element) -> str:
+    xml = etree.tostring(seg, encoding="unicode", with_tail=False)
+    return xml[xml.index(">") + 1 : xml.rindex("</seg>")] if not xml.endswith("/>") else ""
+
+
+def run(wd: WorkDir, call: Caller = claude_cli.call, max_chunks: int | None = None, log=print) -> bool:
+    """Translate every unfinished chunk. Returns True when the whole book is done."""
+    chunks = wd.load_chunks()
+    previous: list[str] = []
+    done_now = 0
+    for chunk in chunks:
+        if chunk["translation"] is not None:
+            previous = [segment.plain_text(m) for m in chunk["translation"][-CONTEXT_SEGMENTS:]]
+            continue
+        if max_chunks is not None and done_now >= max_chunks:
+            return False
+        words = sum(len(segment.plain_text(s["src"]).split()) for s in chunk["segments"])
+        log(f"[{chunk['id']}/{len(chunks):04d}] {len(chunk['segments'])} szegmens, {words} szó")
+        try:
+            chunk["translation"] = translate_segments(wd, chunk["segments"], previous, call, log)
+        except claude_cli.UsageLimitError as e:
+            log(f"Elfogyott a keret, a futás leáll. Folytatás később ugyanezzel a paranccsal.\n{e}")
+            return False
+        wd.save_chunk(chunk)
+        previous = [segment.plain_text(m) for m in chunk["translation"][-CONTEXT_SEGMENTS:]]
+        done_now += 1
+
+    if not wd.labels_path.exists():
+        translate_labels(wd, call, log)
+    return True
+
+
+def collect_labels(wd: WorkDir) -> list[str]:
+    from .build import label_sources  # build owns the TOC/title locations
+
+    return [text for _, text in label_sources(wd)]
+
+
+def translate_labels(wd: WorkDir, call: Caller, log) -> None:
+    labels = collect_labels(wd)
+    if not labels:
+        wd.labels_path.write_text("{}")
+        return
+    log(f"Tartalomjegyzék és cím: {len(labels)} címke")
+    state = wd.load_state()
+    unique = list(dict.fromkeys(labels))
+    prompt = (
+        f"<glossary>\n{wd.glossary_text()}\n</glossary>\n\n"
+        f"<labels>\n{json.dumps(unique, ensure_ascii=False)}\n</labels>\n"
+    )
+    try:
+        result = call(prompt, (PROMPTS / "labels.md").read_text(), state["model"])
+        wd.add_usage(result.usage)
+        text = result.text
+        translated = claude_cli.parse_json(text, "[")
+    except claude_cli.UsageLimitError as e:
+        log(f"Elfogyott a keret a címkék előtt; a következő futás pótolja.\n{e}")
+        return
+    except (ValueError, claude_cli.ClaudeError) as e:
+        log(f"A címkék fordítása nem sikerült, az eredetiek maradnak: {e}")
+        return
+    if len(translated) != len(unique):
+        log("A címkék száma eltér, az eredetiek maradnak.")
+        return
+    wd.labels_path.write_text(json.dumps(dict(zip(unique, translated)), ensure_ascii=False, indent=1))
