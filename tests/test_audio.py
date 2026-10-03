@@ -156,6 +156,7 @@ def test_m4b_has_metadata_chapters_and_cover(book_wd):
             ["ffprobe", "-v", "error", "-show_chapters", "-show_format", "-show_streams", "-of", "json", str(out)],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             check=True,
         ).stdout
     )

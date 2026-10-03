@@ -442,6 +442,7 @@ def duration_ms(path: Path) -> int:
         ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
         capture_output=True,
         text=True,
+        encoding="utf-8",
         check=True,
     ).stdout
     return round(float(out) * 1000)
