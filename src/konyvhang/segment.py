@@ -117,6 +117,7 @@ def to_markup(segment: etree._Element) -> str:
         dst.text = src.text
         for child in src:
             if not isinstance(child.tag, str):
+                keep_tail(dst, child.tail)
                 continue
             new = etree.SubElement(dst, local(child), n=str(next(counter)))
             if local(child) not in OPAQUE_TAGS:
@@ -129,6 +130,16 @@ def to_markup(segment: etree._Element) -> str:
     return re.sub(r"^<seg>|</seg>$|^<seg/>$", "", xml)
 
 
+def keep_tail(dst: etree._Element, tail: str | None) -> None:
+    """Text after a dropped comment joins the text before it, so it is not lost."""
+    if not tail:
+        return
+    if len(dst):
+        dst[-1].tail = (dst[-1].tail or "") + tail
+    else:
+        dst.text = (dst.text or "") + tail
+
+
 def apply_translation(segment: etree._Element, translated: etree._Element) -> None:
     """Replace the segment's content with `translated` (a parsed <seg> element).
 
@@ -139,6 +150,9 @@ def apply_translation(segment: etree._Element, translated: etree._Element) -> No
     def build(src: etree._Element, dst: etree._Element) -> None:
         dst.text = src.text
         for child in src:
+            if not isinstance(child.tag, str):  # a comment in the model's answer
+                keep_tail(dst, child.tail)
+                continue
             orig = originals[int(cast(str, child.get("n"))) - 1]  # validate.check() compared the n attributes
             if local(orig) in OPAQUE_TAGS:
                 new = copy.deepcopy(orig)

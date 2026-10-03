@@ -4,6 +4,7 @@ import argparse
 import io
 import runpy
 import sys
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -139,6 +140,28 @@ def test_glossary_command_stops_cleanly_when_the_quota_runs_out(
         run_cli(monkeypatch, "glossary", "book")
 
 
+@pytest.mark.parametrize("error", [llm.LLMError("no key"), ValueError("bad JSON twice")])
+def test_glossary_command_stops_cleanly_on_other_model_errors(
+    epub_file: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    run_cli(monkeypatch, "prepare", str(epub_file), "--profile", "fiction", "--provider", "claude", "--no-glossary")
+
+    def fail(wd: WorkDir) -> None:
+        raise error
+
+    monkeypatch.setattr(glossary, "build", fail)
+    with pytest.raises(SystemExit, match="nem készült el"):
+        run_cli(monkeypatch, "glossary", "book")
+
+
+def test_prepare_of_a_broken_epub_leaves_no_prepared_book(tmp_path: Path) -> None:
+    broken = tmp_path / "broken.epub"
+    broken.write_bytes(b"not a zip")
+    with pytest.raises(zipfile.BadZipFile):
+        cli.prepare(broken, profile="fiction", provider="claude", model=None, book_id=None, force=False)
+    assert not WorkDir(tmp_path / "work" / "broken").exists()
+
+
 # run ----------------------------------------------------------------------------
 def test_run_needs_a_profile_for_a_new_book(epub_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit, match="--profile"):
@@ -238,6 +261,7 @@ def test_run_with_audio_follows_the_translation(
     assert proc.kwargs["env"]["PYTHONIOENCODING"] == "utf-8"
     out = capsys.readouterr().out
     assert ("még befejezi" in out) == (not done)
+    assert "[hang] [1/2] kész" in out  # the child's output is printed in full before the exit
 
 
 def test_run_with_audio_and_no_skips(epub_file: Path, monkeypatch: pytest.MonkeyPatch, calls: Calls) -> None:

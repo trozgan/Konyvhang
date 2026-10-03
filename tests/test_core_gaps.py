@@ -53,6 +53,24 @@ def test_comments_inside_a_segment_are_skipped() -> None:
     assert segment.to_markup(seg) == 'A <em n="1">b</em>'
 
 
+def test_text_after_a_comment_is_kept() -> None:
+    xml = f'<html xmlns="{XHTML}"><body><p><!-- a -->Hello <!-- b --> world <em>x</em><!-- c --> end</p></body></html>'
+    seg = segment.find_segments(etree.ElementTree(etree.fromstring(xml)))[0]
+    markup = segment.to_markup(seg)
+    assert markup == 'Hello  world <em n="1">x</em> end'
+    segment.apply_translation(seg, etree.fromstring(f"<seg>{markup}</seg>"))
+    assert segment.plain_text(etree.tostring(seg, encoding="unicode")) == "Hello world x end"
+
+
+def test_comments_in_the_translation_are_dropped_but_their_text_stays() -> None:
+    xml = f'<html xmlns="{XHTML}"><body><p>a <em>b</em></p></body></html>'
+    seg = segment.find_segments(etree.ElementTree(etree.fromstring(xml)))[0]
+    answer = '<seg id="1"><!-- hm -->x <!-- hm --> y <em n="1">z</em><!-- hm --> w</seg>'
+    parsed = validate.parse_and_check(answer, {"1": segment.to_markup(seg)})
+    segment.apply_translation(seg, etree.fromstring(f"<seg>{translate.inner_markup(parsed['1'])}</seg>"))
+    assert etree.tostring(seg, encoding="unicode").endswith(">x  y <em>z</em> w</p>")
+
+
 # epub ---------------------------------------------------------------------
 def test_spine_skips_non_xhtml_and_unknown_items(epub_file: Path) -> None:
     with zipfile.ZipFile(epub_file) as zf:
@@ -69,6 +87,30 @@ def test_duplicate_and_extra_segments_are_reported() -> None:
         validate.parse_segments('<seg id="1">a</seg><seg id="1">b</seg>')
     with pytest.raises(validate.ValidationError, match="Fölösleges szegmensek: 2"):
         validate.parse_and_check('<seg id="1">a</seg><seg id="2">b</seg>', {"1": "x"})
+
+
+def test_segment_without_id_is_a_validation_error() -> None:
+    with pytest.raises(validate.ValidationError, match="nincs id"):
+        validate.parse_and_check('<seg>a</seg><seg id="1">b</seg>', {"1": "x"})
+
+
+def test_html_entities_in_the_answer_become_characters() -> None:
+    parsed = validate.parse_and_check('<seg id="1">a&nbsp;b &hellip; &amp; &bogus; &lt;</seg>', {"1": "x"})
+    assert parsed["1"].text == "a\u00a0b \u2026 & &bogus; <"
+
+
+def test_percent_encoded_hrefs_name_zip_entries(epub_file: Path) -> None:
+    with zipfile.ZipFile(epub_file) as zf:
+        files = {n: zf.read(n) for n in zf.namelist()}
+    files["OEBPS/content.opf"] = files["OEBPS/content.opf"].replace(b"text/ch1.xhtml", b"text/ch%201.xhtml")
+    files["OEBPS/text/ch 1.xhtml"] = files.pop("OEBPS/text/ch1.xhtml")
+    with zipfile.ZipFile(epub_file, "w") as zf:
+        for name, data in files.items():
+            zf.writestr(name, data)
+    with zipfile.ZipFile(epub_file) as zf:
+        book = epub.read_book(zf)
+        assert book.spine[0] == "OEBPS/text/ch 1.xhtml"
+        assert zf.read(book.spine[0])
 
 
 # workdir ------------------------------------------------------------------
@@ -133,6 +175,14 @@ def test_single_segment_that_never_validates_raises(epub_file: Path, tmp_path: P
         translate.translate_segments(wd, seg, [], lambda p, s, m: llm.Result("nope"), lambda m: None)
 
 
+def test_a_chunk_that_cannot_be_translated_stops_the_run_cleanly(epub_file: Path, tmp_path: Path) -> None:
+    wd = make_wd(tmp_path, epub_file)
+    logs: list[str] = []
+    assert not translate.run(wd, call=lambda p, s, m: llm.Result("nope"), log=logs.append)
+    assert wd.load_chunks()[0]["translation"] is None
+    assert any("0001. darab nem sikerült" in line for line in logs)
+
+
 def test_book_without_labels_writes_empty_labels(
     epub_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -149,6 +199,7 @@ def test_book_without_labels_writes_empty_labels(
         (llm.LLMError("boom"), "nem sikerült"),
         ("no json here", "nem sikerült"),
         ('["csak egy"]', "száma eltér"),
+        ("[1, 2, 3]", "száma eltér"),  # right length (three unique labels), but not strings
     ],
 )
 def test_label_failures_keep_the_originals(

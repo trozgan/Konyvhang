@@ -91,7 +91,7 @@ def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path: Path, mo
     wd = WorkDir(tmp_path / "w")
     wd.root.mkdir()
     wd.save_state({"profile": "fiction", "model": "opus", "source_name": "x.epub"})
-    answers = iter(['["egy"]', "nem json", '["kettő", "három"]'])
+    answers = iter(['["egy"]', "nem json", '["kettő", "három"]', "[4]"])
     seen: list[str | None] = []
 
     def fake_call(prompt: str, system: str, model: str | None) -> llm.Result:
@@ -104,14 +104,14 @@ def test_spell_numbers_caches_good_batches_and_skips_bad_ones(tmp_path: Path, mo
     monkeypatch.setattr(llm, "caller", lambda provider: fake_call)
     monkeypatch.setattr(audio, "SPEECH_BATCH", 1)
     logs: list[str] = []
-    texts = ["1 alma", "2 körte", "3 szilva", "4 dió", "szöveg szám nélkül", "1 alma"]
+    texts = ["1 alma", "2 körte", "3 szilva", "4 dió", "5 mogyoró", "szöveg szám nélkül", "1 alma"]
 
     cache = audio.spell_numbers(wd, texts, logs.append)
 
     assert cache == {"1 alma": "egy"}
-    assert seen == ["sonnet"] * 4  # claude's light model, one call per batch
+    assert seen == ["sonnet"] * 5  # claude's light model, one call per batch
     assert sum("nem sikerült" in m for m in logs) == 2  # bad JSON, then an error
-    assert sum("elemszám eltér" in m for m in logs) == 1
+    assert sum("elemszám eltér" in m for m in logs) == 2  # too many items, then a number instead of text
     assert json.loads((wd.root / "speech.json").read_text(encoding="utf-8")) == {"1 alma": "egy"}
 
     seen.clear()
@@ -261,13 +261,13 @@ def test_run_reports_bad_pieces_builds_chapters_window_by_window_and_rebuilds_lo
     assert sum(m.startswith("Fejezet kész") for m in logs) == 2
 
     # A lost chapter file is rebuilt from the saved pieces without generating anything.
-    (wd.root / "audio" / "chapters" / "one.m4a").unlink()
+    (wd.root / "audio" / "chapters" / "OEBPS_one.m4a").unlink()
     narrator.takes.clear()
     logs.clear()
     audio.run(wd, Path("voice"), [], log=logs.append)
     assert narrator.takes == []
     assert [m for m in logs if m.startswith("Fejezet kész")] == [
-        f"Fejezet kész: {wd.root / 'audio' / 'chapters' / 'one.m4a'}  (Az első fejezet szövege.)"
+        f"Fejezet kész: {wd.root / 'audio' / 'chapters' / 'OEBPS_one.m4a'}  (Az első fejezet szövege.)"
     ]
 
 
@@ -321,3 +321,26 @@ def test_book_without_cover_or_nav_still_makes_an_m4b(tmp_path: Path, monkeypatc
     )
     assert "video" not in {s["codec_type"] for s in probe["streams"]}
     assert [c["tags"]["title"] for c in probe["chapters"]] == ["Rövid szöveg."]
+
+
+# file names ------------------------------------------------------------------------
+def test_hrefs_are_percent_decoded_and_chapters_in_different_folders_get_different_files(tmp_path: Path) -> None:
+    assert audio.resolve("OEBPS", "text/ch%201.xhtml#n1") == ("OEBPS/text/ch 1.xhtml", "n1")
+    one = audio.chapter_path(tmp_path, {"file": "OEBPS/part1/chapter.xhtml"}, ".m4a")
+    two = audio.chapter_path(tmp_path, {"file": "OEBPS/part2/chapter.xhtml"}, ".m4a")
+    assert one != two
+    assert one.name == "OEBPS_part1_chapter.m4a"
+
+
+def test_m4b_in_a_folder_with_a_quote_in_its_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "O'Brien").mkdir()  # ffmpeg's concat list quotes paths with '
+    wd = make_book(
+        tmp_path / "O'Brien",
+        {
+            "OEBPS/content.opf": opf(item("a", "ch.xhtml"), '<itemref idref="a"/>'),
+            "OEBPS/ch.xhtml": f"<html {X}><body><p>Rövid szöveg.</p></body></html>",
+        },
+    )
+    monkeypatch.setattr(audio, "get_narrator", lambda voice, log: ScriptedNarrator(lambda text, attempt: text))
+    out = audio.run(wd, Path("voice"), [], log=lambda m: None)
+    assert out is not None and out.exists()
