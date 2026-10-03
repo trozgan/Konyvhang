@@ -152,6 +152,12 @@ def test_entities_declared_in_a_document_are_not_expanded(tmp_path: Path) -> Non
     assert b"<p>a&x;b&s;c</p>" in out
 
 
+def test_entity_declarations_survive_the_rewrite() -> None:
+    doc = f'<!DOCTYPE html [<!ENTITY x "Éva">]><html xmlns="{XHTML}"><body><p>a &x; b</p></body></html>'
+    out = epub.serialize(epub.parse_xml(doc.encode("utf-8")))
+    assert "".join(etree.fromstring(out).itertext()) == "a Éva b"  # well-formed, the reference still resolves
+
+
 def test_external_dtd_is_not_loaded(tmp_path: Path) -> None:
     dtd = tmp_path / "broken.dtd"
     dtd.write_text("this is not a DTD <<<", encoding="utf-8")

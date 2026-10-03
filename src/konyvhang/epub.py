@@ -44,7 +44,8 @@ def parse_xml(data: bytes) -> etree._ElementTree:
 
 
 def serialize(tree: etree._ElementTree) -> bytes:
-    return etree.tostring(tree, xml_declaration=True, encoding="utf-8", doctype=tree.docinfo.doctype or None)
+    # lxml writes the original DOCTYPE, internal subset included: entities the body still references stay declared.
+    return etree.tostring(tree, xml_declaration=True, encoding="utf-8")
 
 
 def read_book(zf: zipfile.ZipFile) -> Book:
