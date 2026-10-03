@@ -383,8 +383,9 @@ def test_m4b_chapter_marks_follow_the_chapter_lengths(tmp_path: Path) -> None:
         round(float(probe(m4a, "-show_entries", "format=duration")["format"]["duration"]) * 1000) for m4a in (one, two)
     ]
     info = probe(out, "-show_chapters", "-show_format", "-show_streams")
-    marks = [(c["time_base"], c["start"], c["end"]) for c in info["chapters"]]
-    assert marks == [("1/1000", 0, exact[0]), ("1/1000", exact[0], exact[0] + exact[1])]
+    # ffmpeg versions store the marks in different time bases (1/1000, 1/24000): compare milliseconds
+    marks = [(round(float(c["start_time"]) * 1000), round(float(c["end_time"]) * 1000)) for c in info["chapters"]]
+    assert marks == [(0, exact[0]), (exact[0], exact[0] + exact[1])]
     tags = info["format"]["tags"]
     assert (tags["title"], tags["artist"], tags["genre"]) == ("Cím: Alcím", "Ann, Bob", "Audiobook")
     assert [s["tags"]["language"] for s in info["streams"] if s["codec_type"] == "audio"] == ["hun"]
