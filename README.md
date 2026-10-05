@@ -56,13 +56,17 @@ könyvvel együtt elmentődik. Egy elkezdett könyvnél a `konyvhang run … --p
 
 ## Melyik modellel fordíts?
 
-Mérés a repóban lévő mintakönyvön ([`samples/gift-of-the-magi.epub`](samples/gift-of-the-magi.epub),
-O. Henry: *The Gift of the Magi*, közkincs, 2062 szó, kb. 8 könyvoldal), szépirodalmi
-profillal, a teljes folyamattal: szójegyzék, fordítás, tartalomjegyzék. Az árak az
-OpenRouter által számlázott valódi költségek (2026. október), 10 oldalra és egy 300
-oldalas könyvre vetítve. A minőség három különböző gyártó modelljének (Claude Opus,
-GPT a Codexen át, Gemini 3.1 Pro) vak pontozásának átlaga: a bírálók betűjeleket láttak,
-nem modellneveket, és pontosságot, gördülékenységet, stílust és egységességet pontoztak.
+Két mérés készült a repóban lévő mintakönyvekkel, a teljes folyamattal: szójegyzék,
+fordítás, tartalomjegyzék. Az árak az OpenRouter által számlázott valódi költségek
+(2026. október), 10 oldalra és egy 300 oldalas könyvre vetítve. A minőség három különböző
+gyártó modelljének (Claude Opus, GPT a Codexen át, Gemini 3.1 Pro) vak pontozásának
+átlaga: a bírálók betűjeleket láttak, nem modellneveket.
+
+### Szépirodalom
+
+[`samples/gift-of-the-magi.epub`](samples/gift-of-the-magi.epub): O. Henry, *The Gift of
+the Magi*, közkincs, 2062 szó, kb. 8 könyvoldal, `fiction` profillal. A bírálók
+pontosságot, gördülékenységet, stílust és egységességet pontoztak.
 
 | Modell | Minőség (1–10) | Ár / 10 oldal | Ár / 300 oldal (becslés) | Idő (8 oldal) |
 |---|---|---|---|---|
@@ -86,24 +90,66 @@ szúrópróbánál a DeepSeek 4.1 Flash és a Kimi K3 angol nagykötőjelet (—
 gondolatjel helyett, a Gemini 3.1 Pro pedig egy ritka kötőjelet (‒); a Kimi szövegében
 elírás is volt.
 
-**Javaslat:**
+### Szakkönyv
 
-- **Ha van előfizetésed**, használd azt (`--provider claude` vagy `--provider codex`): nem
-  kerül külön pénzbe, csak a keretből fogy, és a minősége a legjobbak között van.
+[`samples/on-a-piece-of-chalk.epub`](samples/on-a-piece-of-chalk.epub): Thomas Henry
+Huxley, *On a Piece of Chalk* (1868) első fele, közkincs, 4120 szó, kb. 16 könyvoldal,
+`nonfiction` profillal. Ismeretterjesztő előadás lábjegyzetekkel, dőlt latin
+fajnevekkel és geológiai szakszavakkal. A bírálók a stílus helyett a szakszavakat
+pontozták (magyar szakirodalmi alak, megmaradó latin nevek, helyes magyarázat). Itt
+csak az előfizetéses és az olcsóbb API-modellek futottak; az Astra és az Opus API-n
+ugyanaz a modell, mint előfizetéssel, az áruk a szépirodalmi táblázatból becsülhető.
+
+| Modell | Minőség (1–10) | Ár / 10 oldal | Ár / 300 oldal (becslés) | Idő (16 oldal) |
+|---|---|---|---|---|
+| Codex, ChatGPT-előfizetéssel (`gpt-6.1-sol`, high) | 8.8 | előfizetés | előfizetés | 896 s* |
+| Codex, ChatGPT-előfizetéssel (`gpt-6-astra`) | 8.7 | előfizetés | előfizetés | 896 s* |
+| `openai/gpt-6-sol` | 8.6 | $0.13 | ~$3.9 | 133 s |
+| Claude Opus, Claude-előfizetéssel | 7.8 | előfizetés | előfizetés | 332 s |
+| `google/gemini-3.8-flash` | 7.2 | $0.08 | ~$2.5 | 217 s |
+| `deepseek/deepseek-v4.1-flash` | 6.6 | $0.03 | ~$0.83 | 464 s |
+| `openai/gpt-6-luna` | 6.1 | $0.011 | ~$0.33 | 245 s |
+| `qwen/qwen3.7-max` | 5.6 | $0.19 | ~$5.8 | 636 s |
+
+\* A két Codex-futás egyszerre, ugyanazon az előfizetésen ment, ezért az idejük nem
+összehasonlítható a többiével.
+
+Mind a 8 modell hibátlan szerkezetű fordítást adott, de itt a Qwen 3.7 Max és a GPT-6 Luna
+egyszer hibás választ adott, és csak az újrapróbálással lett jó. A bírálók szerint a Luna
+a lábjegyzetekben angol szöveget hagyott, és földrajzi tévedéseket tett; a Qwen szövegében sok a hibás
+mondatszerkezet, a DeepSeek és a Gemini Flash pedig nyelvtani hibát is ejtett („A kréta
+nyelve nem nehéz megtanulni”); a Claude
+Opus régies kémiai neveket használt („szénsavas mész”), és váltogatta a „diatóma” és a
+„kovamoszat” alakot.
+
+### Javaslat
+
+- **Ha van ChatGPT-előfizetésed**, használd a Codexet (`--provider codex`): mindkét
+  mérésben az élen volt, és nem kerül külön pénzbe, csak a keretből fogy.
+- **Claude-előfizetéssel** (`--provider claude`) a minőség mindkét mérésben 7,8: jó, de a
+  Codex és a `gpt-6-sol` mögött van.
 - **API-ból a legjobb ár-érték arány:** `openai/gpt-6-sol` (kb. 4 dollár egy 300 oldalas
-  könyvre), vagy ha az ár a fő szempont, `google/gemini-3.8-flash` (kb. 1,5 dollár).
-- **A legjobb minőség:** `openai/gpt-6-astra`, de ez könyvenként 20 dollár fölött van.
+  könyvre), szépirodalomban és szakkönyvben is. Szépirodalomhoz a `google/gemini-3.8-flash`
+  olcsóbb alternatíva (kb. 1,5 dollár), szakkönyvnél viszont 7,2 pontra esett.
+- **A legjobb minőség:** a `gpt-6-astra`, de API-n könyvenként 20 dollár fölött van, és
+  szakkönyvnél nem volt jobb a feleannyiba kerülő `gpt-6-sol`-nál, illetve a Codex
+  alapértelmezett beállításánál.
 
-**A mérés korlátai:** egyetlen, 8 oldalas szépirodalmi szövegen készült, és modellenként
-egyszer futott. Ugyanaz a Claude Opus az API-n 8,1, az előfizetésen át 7,8 pontot kapott,
-vagyis kb. fél pont eltérés a véletlen szórás. Szakkönyvnél, más szerzőnél más lehet a
-sorrend. A 300 oldalas ár egyenes arányos becslés. A mérés megismételhető:
+**A mérés korlátai:** mindkét mérés egyetlen rövid szövegen készült, és modellenként
+egyszer futott. Ugyanaz a Claude Opus a szépirodalmi mérésben az API-n 8,1, az
+előfizetésen át 7,8 pontot kapott, vagyis kb. fél pont eltérés a véletlen szórás; a 8,6 és
+8,8 közötti modellek között tehát nincs kimutatható különbség. Más szerzőnél, más
+szakterületen más lehet a sorrend. A 300 oldalas ár egyenes arányos becslés. A mérés
+megismételhető:
 
 ```
 OPENROUTER_API_KEY=... uv run scripts/benchmark.py translate openrouter:openai/gpt-6-sol claude:opus
 uv run scripts/benchmark.py judge     # vak pontozás: claude:opus és codex
 uv run scripts/benchmark.py report    # a fenti táblázat
 ```
+
+A szakkönyves mintához a parancs elé kell a `--profile nonfiction` kapcsoló, például
+`uv run scripts/benchmark.py --profile nonfiction report`.
 
 ## Használat
 
