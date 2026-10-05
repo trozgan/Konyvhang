@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, cast
 
 import numpy as np
+from num2words import num2words  # type: ignore[import-untyped]
 
 from . import epub, segment
 from .workdir import WorkDir, write_json
@@ -174,31 +175,91 @@ def chapters(wd: WorkDir, skip: list[str]) -> list[dict[str, Any]]:
     return out
 
 
-def add_pieces(book: list[dict[str, Any]], spoken: dict[str, str]) -> None:
-    """Split each segment (with numbers spelled out) into pieces with the pause after them."""
+SHORT_WORDS = 3  # table cells and list labels this short are read together: alone the voice mispronounces them
+TERMINAL = re.compile(r"[.!?…][\"”»)]*$")
+HEADING_NUMBER = re.compile(r"^\d+(?:\.\d+)*\.?\s+(?=[A-ZÁÉÍÓÖŐÚÜŰ])")  # "4 Babanevelés", not "3. fejezet"
+SECTION_NUMBER = re.compile(r"^\d+(?:\.\d+)+\.?\s+(?=[A-ZÁÉÍÓÖŐÚÜŰ])")  # "4.5. Babanevelés" in a chapter outline
+PAGE_REF = re.compile(r"\s*\((?:pp?|o|old)\.\s*\d+(?:\s*[–-]\s*\d+)?\)|\s*\(\d+(?:\s*[–-]\s*\d+)?\.\s*o(?:ld)?\.\)")
+BLANK = re.compile(r"_{2,}")  # fill-in lines of worksheets
+
+
+def prepare(seg: dict[str, Any]) -> str:
+    """The segment text before spelling numbers: no section numbers, page references or blanks."""
+    text = (HEADING_NUMBER if seg["heading"] else SECTION_NUMBER).sub("", seg["text"])
+    return PAGE_REF.sub("", BLANK.sub("", text))
+
+
+def groups(segments: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """Segments in reading order; runs of very short ones without a sentence end form one group."""
+    out: list[list[dict[str, Any]]] = []
+    previous_short = False
+    for seg in segments:
+        short = not seg["heading"] and len(seg["text"].split()) <= SHORT_WORDS and not TERMINAL.search(seg["text"])
+        if short and previous_short:
+            out[-1].append(seg)
+        else:
+            out.append([seg])
+        previous_short = short
+    return out
+
+
+def segment_pieces(text: str, heading: bool) -> list[dict[str, Any]]:
+    parts = split_long(text)
+    return [
+        {"text": part, "pause": PAUSE["heading"] if heading else PAUSE["paragraph"] if i == len(parts) - 1 else 0.25}
+        for i, part in enumerate(parts)
+    ]
+
+
+def legacy_pieces(group: list[dict[str, Any]], spoken: dict[str, str]) -> list[dict[str, Any]]:
+    """The pieces earlier versions made: one segment at a time, its text as it was."""
+    return [p for seg in group for p in segment_pieces(spoken.get(seg["text"], seg["text"]), seg["heading"])]
+
+
+def group_pieces(group: list[dict[str, Any]], spoken: dict[str, str]) -> list[dict[str, Any]]:
+    texts = [t.strip() for t in (spoken.get(p, p) for p in map(prepare, group)) if segment.LETTER.search(t)]
+    if not texts:
+        return []
+    joined = texts[0]
+    for text in texts[1:]:  # read as a list, unless the item before ends in its own mark
+        joined += (" " if joined[-1] in ",:;–—" else ", ") + text
+    return segment_pieces(joined, group[0]["heading"])
+
+
+def add_pieces(
+    book: list[dict[str, Any]], spoken: dict[str, str], done: Callable[[str], bool] = lambda text: False
+) -> None:
+    """Split each segment (with numbers spelled out) into pieces with the pause after them.
+
+    A group whose pieces earlier versions already generated keeps them, so new rules never
+    regenerate finished audio.
+    """
     for chapter in book:
         chapter["pieces"] = []
-        for seg in chapter["segments"]:
-            parts = split_long(spoken.get(seg["text"], seg["text"]))
-            for i, part in enumerate(parts):
-                last = i == len(parts) - 1
-                pause = PAUSE["heading"] if seg["heading"] else PAUSE["paragraph"] if last else 0.25
-                chapter["pieces"].append({"text": part, "pause": pause})
+        for group in groups(chapter["segments"]):
+            old = legacy_pieces(group, spoken)
+            chapter["pieces"] += old if all(done(p["text"]) for p in old) else group_pieces(group, spoken)
 
 
 # numbers -------------------------------------------------------------------
 SPEECH_BATCH = 60
-DIGIT = re.compile(r"\d")
+SPELL = re.compile(r"\d|\b(?:[IVXLCDM]{2,}|[IVX])\.")  # digits and Roman numerals such as "II. rész", not "M."
+
+
+def speech_cache(wd: WorkDir) -> dict[str, str]:
+    path = wd.root / "speech.json"
+    cache: dict[str, str] = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    return cache
 
 
 def spell_numbers(wd: WorkDir, texts: list[str], log: Callable[[str], None]) -> dict[str, str]:
-    """Spoken forms for texts with digits, made once by Claude and cached in speech.json."""
+    """Spoken forms for texts with numbers, made once by Claude and cached in speech.json."""
     from . import llm
     from .translate import is_string_list
 
     path = wd.root / "speech.json"
-    cache = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-    todo = list(dict.fromkeys(t for t in texts if DIGIT.search(t) and t not in cache))
+    cache = speech_cache(wd)
+    todo = list(dict.fromkeys(t for t in texts if SPELL.search(t) and t not in cache))
     system = (Path(__file__).parent / "prompts" / "speech.md").read_text(encoding="utf-8")
     state = wd.load_state()
     provider = state.get("provider", "claude")
@@ -224,7 +285,8 @@ def spell_numbers(wd: WorkDir, texts: list[str], log: Callable[[str], None]) -> 
 
 # checks --------------------------------------------------------------------
 def normalize(text: str) -> str:
-    text = re.sub(r"\d+", " ", text.lower())
+    """Lower-case words only; digits become Hungarian words, because Whisper writes "4.5." for "négy pont öt"."""
+    text = re.sub(r"\d+", lambda m: str(num2words(int(m.group()), lang="hu")), text.lower())
     return " ".join(re.findall(r"[^\W\d_]+", text))
 
 
@@ -364,12 +426,20 @@ def run(
     if not book:
         log("Még nincs felolvasható lefordított rész.")
         return None
-    add_pieces(book, spell_numbers(wd, [s["text"] for c in book for s in c["segments"]], log))
-    missing = list(
-        dict.fromkeys(
-            p["text"] for c in book for p in c["pieces"] if not (pieces_dir / f"{piece_key(p['text'])}.wav").exists()
-        )
-    )
+
+    def generated(text: str) -> bool:
+        return (pieces_dir / f"{piece_key(text)}.wav").exists()
+
+    cache = speech_cache(wd)
+    todo = [
+        prepare(seg)
+        for c in book
+        for group in groups(c["segments"])
+        if not all(generated(p["text"]) for p in legacy_pieces(group, cache))
+        for seg in group
+    ]
+    add_pieces(book, spell_numbers(wd, todo, log), generated)
+    missing = list(dict.fromkeys(p["text"] for c in book for p in c["pieces"] if not generated(p["text"])))
     total = sum(len(c["pieces"]) for c in book)
     log(f"{len(book)} fejezet, {total} hangdarab, ebből {len(missing)} hiányzik, hang: {voice}")
     started = time.perf_counter()

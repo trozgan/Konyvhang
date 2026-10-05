@@ -194,8 +194,10 @@ uv run --group tts konyvhang audio <könyv> --follow              # a fordítás
 
 - A borítót, a címoldalt, a tartalomjegyzéket és a kolofont a kiadói jelölések alapján kihagyja; ami nincs jelölve, azt a `--skip <fájlnév-részlet>` kapcsolóval lehet kihagyni.
 - A lábjegyzeteket a hivatkozó bekezdés után olvassa fel.
-- A számokat egyszer Claude-dal betűvel kiíratja (`speech.json`).
-- 8-as kötegekben generál (M4 Pro-n kb. négyszer gyorsabb a valós időnél), és minden darabot Whisperrel visszaellenőriz; a gyenge darabokat egyenként újragenerálja, ami így sem jó, az a `report.json`-ba kerül.
+- A számokat és a római számokat egyszer Claude-dal betűvel kiíratja (`speech.json`). Az oldalszám-hivatkozásokat, a hivatkozások évszámait, a kitöltendő vonalakat és a szakaszszámokat („4.5. Babanevelés”) nem olvassa fel.
+- Az egymást követő, legfeljebb háromszavas, mondatvég nélküli sorokat (táblázatcellák, címkék) egy felsorolásként olvassa fel, mert külön a hang rosszul ejti ki őket.
+- 8-as kötegekben generál (M4 Pro-n kb. négyszer gyorsabb a valós időnél), és minden darabot Whisperrel visszaellenőriz (a Whisper számjegyeit betűvel hasonlítja össze); a gyenge darabokat egyenként újragenerálja, ami így sem jó, az a `report.json`-ba kerül.
+- A már legenerált hangdarabok megmaradnak: ha a felolvasási szabályok változnak, csak a még hiányzó részek készülnek az új szabályokkal.
 - Kimenet: fejezetenként `.m4a`, a végén borítós, fejezetjeles `.m4b` a `work/<könyv>/out/` mappában.
 
 ## Fejlesztés
