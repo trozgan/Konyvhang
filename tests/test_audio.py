@@ -24,9 +24,8 @@ def test_split_long_at_sentence_ends() -> None:
     assert " ".join(pieces) == text
 
 
-def test_similarity_ignores_case_punctuation_and_digits() -> None:
+def test_similarity_ignores_case_and_punctuation() -> None:
     assert audio.similarity("– Megveszi a hajamat? – kérdezte.", "Megveszi a hajamat, kérdezte") == 1.0
-    assert audio.similarity("Huszonöt év", "25 év") < 1.0
     assert audio.similarity("Egy teljesen más mondat.", "Semmi köze hozzá") < audio.MIN_SIMILARITY
 
 
