@@ -17,7 +17,7 @@ repos:
         exclude: ^(src/konyvhang/prompts/|samples/|tests/conftest\.py$)
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10  # keep equal to ruff in uv.lock
+    rev: v0.17.3  # keep equal to ruff in uv.lock
     hooks:
       - id: ruff-check
         args: [--fix]
