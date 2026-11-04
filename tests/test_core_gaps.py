@@ -248,3 +248,12 @@ def test_build_runs_epubcheck_when_installed(
     logs: list[str] = []
     build.build(wd, partial=True, log=logs.append)
     assert logs[-1] == expected
+
+
+def test_build_skips_epubcheck_when_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    src = make_epub(tmp_path / "b.epub")
+    wd = make_wd(tmp_path, src)
+    monkeypatch.setattr("konyvhang.build.shutil.which", lambda name: None)
+    logs: list[str] = []
+    out = build.build(wd, partial=True, log=logs.append)
+    assert logs[-1] == f"Kész: {out}"
