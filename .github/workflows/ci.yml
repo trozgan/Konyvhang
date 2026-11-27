@@ -50,8 +50,11 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python }}
-      - name: Install ffmpeg (Linux, Windows)
-        if: runner.os != 'macOS'
+      - name: Install ffmpeg (Linux, the action below fails to scrape its Linux build)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
         uses: FedericoCarboni/setup-ffmpeg@37062fbf7149fc5578d6c57e08aed62458b375d6 # v3.1
       - name: Install ffmpeg (macOS, ARM runners are not supported by the action above)
         if: runner.os == 'macOS'
